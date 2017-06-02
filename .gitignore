@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*cache
+*html
+rsconnect/
+cb_2015*
+tl_2013*
