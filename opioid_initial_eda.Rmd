@@ -1,0 +1,129 @@
+---
+title: "Opioid Utilization"
+author: "Julia Silge"
+date: '`r Sys.Date()`'
+output:
+html_document: default
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(cache = TRUE,
+                      warning = FALSE, message = FALSE, 
+                      dpi = 180)
+options(width=80)
+library(ggplot2)
+library(silgelib)
+theme_set(theme_roboto())
+```
+
+
+## Clean and tidy opioid utilization data
+
+```{r opioids_raw}
+library(acs)
+library(tidyverse)
+library(readxl)
+library(stringr)
+library(reshape2)
+
+opioids_raw <- bind_rows(
+    read_excel("./disp_drug_zip_14_16-2.xlsx", 
+                          sheet = 1, skip = 2,
+                          col_names = c("zipcode", "codeine", "hydrocodone", "tramadol", "total")) %>%
+    mutate(year = 2016) %>%
+    filter(!is.na(zipcode),
+           zipcode != 999999999),
+    read_excel("./disp_drug_zip_14_16-2.xlsx", 
+                          sheet = 2, skip = 2,
+                          col_names = c("zipcode", "codeine", "hydrocodone", "tramadol", "total")) %>%
+    mutate(year = 2015) %>%
+    filter(!is.na(zipcode),
+           zipcode != 999999999),
+    read_excel("./disp_drug_zip_14_16-2.xlsx", 
+                          sheet = 3, skip = 2,
+                          col_names = c("zipcode", "codeine", "hydrocodone", "tramadol", "total")) %>%
+    mutate(year = 2014) %>%
+    filter(!is.na(zipcode),
+           zipcode != 999999999)) %>%
+    filter(zipcode != 0,
+           nchar(as.character(zipcode)) <= 5)
+
+opioids_raw
+```
+
+
+```{r opioids, dependson="opioids_raw"}
+opioids <- opioids_raw %>%
+    mutate(zipcode = str_pad(zipcode, 5, "left", "0")) %>%
+    replace_na(list(codeine = 0,
+                    hydrocodone = 0,
+                    tramadol = 0,
+                    total = 0))
+
+opioids
+```
+
+## Download population in each county from US Census
+
+```{r population}
+zip_codes <- geo.make(zip.code = "*")
+popfetch <- acs.fetch(geography = zip_codes, 
+                      endyear = 2014,
+                      span = 5, 
+                      table.number = "B01003",
+                      col.names = "pretty")
+
+population <- melt(estimate(popfetch)) %>%
+    as_tibble() %>%
+    mutate(zipcode = str_extract(Var1, "\\d*(\\d{5})")) %>%
+    select(zipcode, total_pop = value)
+
+population
+```
+
+Need to get a list of TX zip codes and inner join here to get rid of the non-Texas ones
+
+## Join Census data to opioid data
+
+```{r opioids_joined, dependson = c("opioids", "population")}
+opioids_joined <- opioids %>%
+    inner_join(population) %>%
+    mutate(opioid_rate = total / total_pop * 1000)
+
+opioids_joined
+```
+
+
+```{r opioids_spread, dependson = "opioids_joined"}
+opioids_spread <- opioids_joined %>%
+    select(zipcode, year, opioid_rate) %>%
+    distinct(zipcode, year, .keep_all = TRUE) %>%
+    spread(year, opioid_rate, fill = 0)
+
+opioids_spread
+```
+
+## Making a map
+
+[Shape file for zip codes](https://www.census.gov/geo/maps-data/data/cbf/cbf_zcta.html)
+
+```{r}
+library(rgdal)
+library(leaflet)
+
+zips <- readOGR("./cb_2015_us_zcta510_500k.shp",
+                layer = "cb_2015_us_zcta510_500k", verbose = FALSE)
+
+zips@data <- zips@data %>%
+    left_join(opioids_spread, by = c("ZCTA5CE10" = "zipcode"))
+
+leaflet(zips) %>%
+    addPolygons(
+        stroke = FALSE, fillOpacity = 0.5, smoothFactor = 0.5,
+        color = ~colorBin("PuBuGn", domain = zips$`2016`, bins = 9)(`2016`)
+    )
+```
+
+
+

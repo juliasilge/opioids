@@ -1,0 +1,222 @@
+---
+title: "Opioid Utilization Exploratory Data Analysis"
+author: "Julia Silge"
+date: "3/3/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(cache = TRUE,
+                      warning = FALSE, message = FALSE, 
+                      dpi = 180)
+options(width=80)
+library(ggplot2)
+library(silgelib)
+theme_set(theme_roboto())
+```
+
+
+## Clean and tidy opioid utilization data
+
+Let's open up the dataset and start munging and preparing it.
+
+```{r opioids_raw}
+library(acs)
+library(tidyverse)
+library(readxl)
+library(stringr)
+library(reshape2)
+
+opioids_raw <- bind_rows(
+    read_excel("./OpiodDispensation_Zip_2014.xlsx", 
+               sheet = 1, skip = 1) %>%
+        mutate(month = "September") %>%
+        rename(zipcode = `Zip Code`),
+    read_excel("./OpiodDispensation_Zip_2014.xlsx", 
+               sheet = 2, skip = 1) %>%
+        mutate(month = "October") %>%
+        rename(zipcode = `Zip Code`),
+    read_excel("./OpiodDispensation_Zip_2014.xlsx", 
+               sheet = 3, skip = 1) %>%
+        mutate(month = "November") %>%
+        rename(zipcode = `Zip Code`),
+    read_excel("./OpiodDispensation_Zip_2014.xlsx", 
+               sheet = 4, skip = 1) %>%
+        mutate(month = "December") %>%
+        rename(zipcode = `Dispensary Postal Code`)) %>%
+    rename(total = Totals) 
+
+opioids_raw[is.na(opioids_raw)] <- 0
+
+opioids_raw
+```
+
+Let's connect [those zipcodes to counties](http://www2.census.gov/geo/docs/maps-data/data/rel/zcta_county_rel_10.txt). Zipcodes are great, but a bigger unit like counties will be better for mapping purposes.
+
+```{r texas_opioids, dependson="opioids_raw"}
+zcta_county <- read_csv("http://www2.census.gov/geo/docs/maps-data/data/rel/zcta_county_rel_10.txt") %>%
+    select(ZCTA5, STATE, COUNTY, GEOID) %>%
+    filter(STATE == 48)
+
+texas_opioids <- opioids_raw %>% 
+    inner_join(zcta_county, by = c("zipcode" = "ZCTA5"))
+
+texas_opioids
+```
+
+
+## Download population in each Texas county from US Census
+
+Let's find the population in each Texas county so we can do some relative comparisons.
+
+```{r population}
+tx_counties <- geo.make(state="TX", county="*")
+popfetch <- acs.fetch(geography = tx_counties, 
+                      endyear = 2014,
+                      span = 5, 
+                      table.number = "B01003",
+                      col.names = "pretty")
+
+myfips <- acs::geography(popfetch) %>%  
+                mutate(FIPS = str_c(str_sub(str_c("000", state),-2),
+                                    str_sub(str_c("000", county),-3))) %>%
+                select(FIPS)
+
+acs::geography(popfetch) <- cbind(myfips, acs::geography(popfetch))
+
+population <- melt(estimate(popfetch)) %>%
+    as_tibble() %>%
+    select(county_fips = Var1, total_pop = value)
+
+population
+```
+
+## Join Census data to opioid data
+
+Next let's join the data from the Census to the opioid utilization data. We will calculate a *rate* of opioid utilization that is the number of total prescriptions divided by the population (per 10,000 people).
+
+```{r opioids_joined, dependson = c("texas_opioids", "population")}
+opioids_joined <- texas_opioids %>%
+    group_by(GEOID, month) %>% 
+    summarise(total = sum(total)) %>%
+    ungroup %>%
+    inner_join(population, by = c("GEOID" = "county_fips")) %>%
+    mutate(opioid_rate = total / total_pop * 1e3,
+           opioid_rate = ifelse(is.infinite(opioid_rate), NA, opioid_rate))
+
+opioids_joined
+```
+
+Now let's reshape this dataset for plotting purposes. We want columns with the rates and totals for each month.
+
+```{r opioids_spread, dependson = "opioids_joined"}
+rate_spread <- opioids_joined %>%
+    select(GEOID, month, opioid_rate) %>%
+    spread(month, opioid_rate, fill = 0)
+
+totals_spread <- opioids_joined %>%
+    select(GEOID, month, total) %>%
+    spread(month, total, fill = 0)
+
+cutoff <- 400
+
+opioids_spread <- rate_spread %>%
+    left_join(totals_spread, by = "GEOID", suffix = c("Rate", "Total")) %>%
+    rename(December = DecemberRate,
+           November = NovemberRate,
+           October = OctoberRate,
+           September = SeptemberRate) %>%
+    replace_na(list(DecemberTotal = 0,
+                    NovemberTotal = 0,
+                    OctoberTotal = 0,
+                    SeptemberTotal = 0)) %>%
+    mutate(December = ifelse(December > cutoff, cutoff, December),
+           November = ifelse(November > cutoff, cutoff, November),
+           October = ifelse(October > cutoff, cutoff, October),
+           September = ifelse(September > cutoff, cutoff, September))
+
+opioids_spread
+```
+
+
+## Making a map
+
+I'll use a [geojson file for Texas counties](https://github.com/TNRIS/tx.geojson) to make this map. The map will show the rate of opioid prescriptions (per 1000 population) in each county, and click on a county to see its name and the number (count, *not* rate) of prescriptions there in that month. Rates that are higher than `r cutoff` prescriptions per 1000 population are represented by the same color as `r cutoff`.
+
+```{r map, dependson="opioids_spread"}
+library(leaflet)
+library(scales)
+
+
+counties <- geojsonio::geojson_read("./tx_counties.geojson", what = "sp")
+
+counties@data <- counties@data %>%
+    mutate(FIPS = as.integer(as.character(FIPS))) %>%
+    left_join(opioids_spread, by = c("FIPS" = "GEOID")) 
+
+counties@data[is.na(counties@data)] <- 0
+pal <- colorNumeric(palette = "viridis", domain = c(0, cutoff))
+
+leaflet(counties, width = "100%") %>%
+    addProviderTiles("CartoDB.Positron") %>%
+    addPolygons(
+        popup = ~paste0("<b>", COUNTY, "</b><br/>", comma_format()(SeptemberTotal), " prescriptions"),
+        stroke = FALSE, fillOpacity = 0.7, smoothFactor = 0.5,
+        color = ~pal(September), group = "September"
+    ) %>%
+    addPolygons(
+        popup = ~paste0("<b>", COUNTY, "</b><br/>", comma_format()(OctoberTotal), " prescriptions"),
+        stroke = FALSE, fillOpacity = 0.7, smoothFactor = 0.5,
+        color = ~pal(October), group = "October"
+    ) %>%
+    addPolygons(
+        popup = ~paste0("<b>", COUNTY, "</b><br/>", comma_format()(NovemberTotal), " prescriptions"), 
+        stroke = FALSE, fillOpacity = 0.7, smoothFactor = 0.5,
+        color = ~pal(November), group = "November"
+    ) %>%
+    addPolygons(
+        popup = ~paste0("<b>", COUNTY, "</b><br/>", comma_format()(DecemberTotal), " prescriptions"),
+        stroke = FALSE, fillOpacity = 0.7, smoothFactor = 0.5,
+        color = ~pal(December), group = "December"
+    ) %>%
+    addLayersControl(
+        baseGroups = c("September", "October", "November", "December"),
+        options = layersControlOptions(collapsed = FALSE)
+    ) %>%
+    addLegend("bottomright", pal = pal, values = c(0, cutoff),
+              title = "Prescriptions per 1k population",
+              opacity = 1
+    )
+```
+
+A couple of things to note:
+
+- The highest rates of opioid prescription are in rural counties but there is more uncertainty in measuring the rate there because populations are so low.
+- The counties with the highest rates are pretty consistent within these months, indicating that this isn't just noise; this is a real effect of some kind.
+- Some of the very rural counties with high rates of presciptions are next to counties with *no* prescriptions so people may be driving from one county to another to buy opioids from a pharmacy. This will drive the rate up in the rural counties that have pharmacies. (Most people certainly buy from a pharmacy in their own county, but this is less likely to be true in a rural area.)
+
+In case it is helpful, here is just a population map of Texas.
+
+```{r dependson=c("map", "population")}
+counties@data <- counties@data %>%
+    left_join(population, by = c("FIPS" = "county_fips")) 
+
+pal <- colorQuantile(palette = "viridis", domain = counties@data$total_pop, n = 10)
+
+leaflet(counties, width = "100%") %>%
+    addProviderTiles("CartoDB.Positron") %>%
+    addPolygons(
+        popup = ~COUNTY,
+        stroke = FALSE, fillOpacity = 0.7, smoothFactor = 0.5,
+        color = ~pal(total_pop)
+    ) %>%
+    addLegend("bottomright", pal = pal, values = counties@data$total_pop,
+              title = "Population Percentiles",
+              opacity = 1
+    )
+
+```
+
+
+
