@@ -64,83 +64,229 @@ opioids_raw[is.na(opioids_raw)] <- 0
 opioids_raw
 ```
 
-Let's connect [those zipcodes to counties](http://www2.census.gov/geo/docs/maps-data/data/rel/zcta_county_rel_10.txt). Zipcodes are great, but a bigger unit like counties will be better for mapping purposes.
+Let's connect [those zipcodes to counties](http://www2.census.gov/geo/docs/maps-data/data/rel/zcta_county_rel_10.txt), in order to clean out the zip codes which are not located in Texas. (Probably bad data entry?)
 
-```{r texas_opioids, dependson="opioids_raw"}
+```{r opioids_dedupes, dependson="opioids_raw"}
 zcta_county <- read_csv("http://www2.census.gov/geo/docs/maps-data/data/rel/zcta_county_rel_10.txt") %>%
     select(ZCTA5, STATE, COUNTY, GEOID) %>%
     filter(STATE == 48)
 
-texas_opioids <- opioids_raw %>% 
+opioids_dedupes <- opioids_raw %>% 
     mutate(zipcode = as.character(zipcode)) %>%
-    inner_join(zcta_county, by = c("zipcode" = "ZCTA5"))
+    inner_join(zcta_county, by = c("zipcode" = "ZCTA5")) %>%
+    select(-STATE, -COUNTY, -GEOID) %>%
+    distinct(zipcode, date, .keep_all = TRUE)
 
-texas_opioids
+opioids_dedupes
 ```
 
+Now we have just entries from zip codes in Texas
 
-## Download population in each Texas county from US Census
+## Download population in each Texas zip code from US Census
 
-Let's find the population in each Texas county so we can do some relative comparisons.
+Let's find the population in each zip code so we can do some relative comparisons.
 
 ```{r population}
 library(tidycensus)
 
-population <- get_acs(geography = "county", 
-                     variables = "B01003_001", 
-                     state = "TX",
-                     geometry = TRUE) 
+population_zip <- get_acs(geography = "zcta", 
+                          variables = "B01003_001", 
+                          geometry = TRUE) 
 
-population
+population_zip
+
+## also get Texas counties, for later
+
+population_county <- get_acs(geography = "county", 
+                             variables = "B01003_001", 
+                             state = "TX",
+                             geometry = TRUE) 
+
+population_county
 ```
 
+That's actually the whole US, so let's get to just the Texas zip codes again.
 
-
-## Join Census data to opioid data
-
-Next let's join the data from the Census to the opioid utilization data. We will calculate a *rate* of opioid utilization that is the number of total prescriptions divided by the population (per 10,000 people).
-
-```{r opioids_joined, dependson = c("texas_opioids", "population")}
-library(sf)
-
-opioids_joined <- texas_opioids %>%
-    group_by(GEOID) %>%
-    summarise(total = sum(total)) %>%
-    ungroup %>%
-    inner_join(population %>% 
-                      mutate(GEOID = as.integer(GEOID))) %>%
-    mutate(opioid_rate = total / estimate * 1e3,
-           opioid_rate = ifelse(is.infinite(opioid_rate), NA, opioid_rate)) %>%
+```{r texas_opioids, dependson="opioids_dedupes"}
+texas_opioids <- opioids_dedupes %>%
+    inner_join(population_zip %>%
+                   mutate(zipcode = GEOID),
+               by = "zipcode") %>%
+    select(-GEOID) %>%
     st_as_sf()
+
+texas_opioids
+```
+
+There we go!
+
+## Calculate rate of opioid use
+
+Next let's calculate a *rate* of opioid utilization that is the number of total prescriptions divided by the population (per 1,000 people).
+
+```{r opioids_joined, dependson = "texas_opioids"}
+opioids_joined <- texas_opioids %>%
+    as.data.frame() %>%
+    group_by(zipcode) %>%
+    summarise(total = median(total)) %>%
+    ungroup %>%
+    inner_join(texas_opioids %>% 
+                      distinct(zipcode, estimate, geometry)) %>%
+    mutate(opioid_rate = total / estimate * 1e3,
+           opioid_rate = ifelse(is.infinite(opioid_rate), NA, opioid_rate))
 
 opioids_joined
 ```
 
 
-```{r}
-library(leaflet)
-library(stringr)
+#### Opioid prescription rate in the top 10 most populous Texas zip codes
 
-pal <- colorNumeric(palette = "viridis", domain = log(opioids_joined$opioid_rate))
-
-opioids_joined %>%
-    st_transform(crs = "+init=epsg:4326") %>%
-    leaflet(width = "100%") %>%
-    addProviderTiles(provider = "CartoDB.Positron") %>%
-    addPolygons(popup = ~ str_extract(NAME, "^([^,]*)"),
-                stroke = FALSE,
-                smoothFactor = 0,
-                fillOpacity = 0.7,
-                color = ~ pal(log(opioid_rate))) %>%
-    addLegend("bottomright", 
-              pal = pal, 
-              values = ~ log(opioid_rate),
-              title = "Log of prescriptions\nper 1k population",
-              opacity = 1)
+```{r dependson="texas_opioids"}
+texas_opioids %>% 
+    as.data.frame() %>%
+    group_by(zipcode, estimate) %>%
+    summarise(total = median(total)) %>%
+    ungroup %>%
+    mutate(opioid_rate = total / estimate * 1e3,
+           opioid_rate = ifelse(is.infinite(opioid_rate), NA, opioid_rate)) %>%
+    top_n(10, estimate) %>%
+    arrange(desc(estimate)) %>%
+    select(zipcode, opioid_rate) %>%
+    kable(col.names = c("Zip code", "Median monthly prescriptions per 1k population"))
 ```
 
 
+We can also map the state as a whole.
 
+```{r make_map, dependson="opioids_joined"}
+library(sf)
+library(leaflet)
+library(stringr)
+
+opioids_map <- opioids_joined %>%
+    mutate(opioid_rate = ifelse(opioid_rate > 200, 200, opioid_rate))
+
+pal <- colorNumeric(palette = "viridis", domain = opioids_map$opioid_rate)
+
+opioids_map %>%
+    st_as_sf() %>%
+    st_transform(crs = "+init=epsg:4326") %>%
+    leaflet(width = "100%") %>%
+    addProviderTiles(provider = "CartoDB.Positron") %>%
+    addPolygons(popup = ~ zipcode,
+                stroke = FALSE,
+                smoothFactor = 0,
+                fillOpacity = 0.7,
+                color = ~ pal(opioid_rate)) %>%
+    addLegend("bottomright", 
+              pal = pal, 
+              values = ~ opioid_rate,
+              title = "Monthly prescriptions\nper 1k population",
+              opacity = 1)
+```
+
+This whole exercise has made me see how difficult it is to draw robust conclusions about this kind of measurement for areas that are as different from each other as rural and urban Texas are. There are zip codes in west Texas with no pharmacies in them at all, and people must be driving into neighboring areas if they have opioid prescriptions. This drives up the opioid rate in those zip codes that do have pharmacies. This would *not* happen as much in the more populated eastern half of the state, although obviously it is easy to drive to a different zip code in a big city as well. It's not obvious from a simple analysis where geographically there is more or less opioid utilization. Pharmacies are fewer in number than people, and the population is more spread out than the pharmacies. Only in urban areas are the number of pharmacies a good tracer of the number of people.
+
+
+```{r monthly_plotly, dependson="opioids_joined", fig.width=12, fig.height=9}
+library(plotly)
+p <- opioids_joined %>%
+    filter(opioid_rate < 200) %>%
+    ggplot(aes(estimate, opioid_rate, tooltip = zipcode)) +
+    geom_point(alpha = 0.5, size = 1.5, color = "midnightblue") +
+    scale_x_log10(labels = scales::comma_format()) +
+    labs(x = "Zip code population",
+         y = "Median monthly opioid prescription per 1k population",
+         title = "Opioid prescriptions in Texas")
+
+ggplotly(p, tooltip = "zipcode")
+
+```
+
+Patterns of pharmacy locations make the opioid utilization rate in rural Texas difficult to measure.
+
+## Which drugs are growing the fastest?
+
+Let's examine how these prescriptions are changing with time.
+
+```{r overall, dependson="texas_opioids", fig.width=8, fig.height=5}
+texas_opioids %>%
+    group_by(date) %>%
+    summarise_at(vars(total:`C-II`), sum) %>%
+    gather(drug, prescriptions, total:`C-II`) %>%
+    filter(prescriptions < 1e7) %>%
+    ggplot(aes(date, prescriptions, color = drug)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Total monthly prescriptions",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "Total prescriptions are increasing\nIs the overall increase being driven by Schedule C-IV drugs?")
+```
+
+
+Let's use linear regression modeling to find the individual drugs that are being prescribed more often now compared to two years ago.
+
+```{r time_models, dependson="texas_opioids"}
+library(broom)
+
+opioids_by_month <- texas_opioids %>%
+    as.data.frame() %>%
+    group_by(date) %>%
+    summarise_at(vars(buprenorphine:tramadol), sum) %>%
+    gather(drug, prescriptions, buprenorphine:tramadol) %>%
+    filter(prescriptions < 1e6)
+    
+time_models <- opioids_by_month %>%
+    nest(-drug) %>%
+    mutate(models = map(data, ~ lm(prescriptions ~ date, .))) %>%
+    unnest(map(models, tidy)) %>%
+    filter(term == "date") %>%
+    arrange(desc(estimate))
+
+time_models
+```
+
+Which drugs are being prescribed *more*? These are the five fastest growing over this time period.
+
+```{r fastest_growing, dependson="time_models", fig.width=8, fig.height=6}
+opioids_by_month %>%
+    inner_join(time_models %>%
+                   top_n(5, estimate)) %>%
+    ggplot(aes(date, prescriptions, color = drug)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Total monthly prescriptions",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "The fastest growing five drugs are responsible for the overall increase\nTramadol and codeine appear to be the biggest contributors")
+```
+
+You can tell from this plot that this modeling procedure did not necessarily find the largest; it identified the fastest growing. Morphine and friends at the bottom of the graph are not large contributors but they are among the fastest growing.
+
+Are there drugs which are decreasing in number of prescriptions?
+
+```{r fastest_shrinking, dependson="time_models", fig.width=8, fig.height=6}
+opioids_by_month %>%
+    inner_join(time_models %>%
+                   top_n(-5, estimate)) %>%
+    ggplot(aes(date, prescriptions, color = drug)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Total monthly prescriptions",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "These are the fastest shrinking five drugs\nHydrocodone use is on the decline")
+```
+
+
+I could also look at which zip codes are increasing the fastest. That might be a way to look at geographical information that doesn't get so biased by the urban/rural issue.
 
 
 
