@@ -1,0 +1,328 @@
+---
+title: "County Level Texas Opioid Prescription Data"
+author: "Julia Silge"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(cache = TRUE,
+                      warning = FALSE, message = FALSE, 
+                      dpi = 180)
+options(width=80)
+library(ggplot2)
+library(silgelib)
+theme_set(theme_roboto())
+```
+
+
+## Clean and tidy opioid utilization data
+
+Let's open up the dataset and start munging and preparing it.
+
+```{r opioids_raw}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(stringr)
+
+path <- "CountyDrugPillQty_2017_07.xlsx"
+
+opioids_raw <- path %>%
+    excel_sheets() %>%
+    set_names() %>%
+    map_df(~ read_excel(path = path, sheet = .x), .id = "sheet") %>%
+    mutate(Date = dmy(str_c("01-", sheet))) %>%
+    select(-sheet) %>%
+    rename(Name = `Generic Name`)
+```
+
+
+```{r opioids_tidy, dependson="opioids_raw"}
+opioids_tidy <- opioids_raw %>%
+    gather(County, Pills, ANDERSON:ZAVALA) %>%
+    mutate(Pills = ifelse(Pills > 1e10, NA, Pills)) %>%
+    replace_na(replace = list(Pills = 0)) %>%
+    mutate(County = str_to_title(County))
+
+opioids_tidy
+```
+
+
+## Total number of pills prescribed over time
+
+What does the overall pattern of pills prescribed looked like?
+
+```{r total, dependson="opioids_tidy", fig.width=7, fig.height=5}
+opioids_tidy %>%
+    group_by(Date) %>%
+    summarise(Pills = sum(Pills)) %>%
+    ggplot(aes(Date, Pills)) +
+    geom_line(size = 1.2, alpha = 0.7) +
+    expand_limits(y = 0) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "The median number of pills prescribed per month in Texas during this time period is 200 million")
+```
+
+
+## Which drugs are growing the fastest?
+
+Let's examine how these prescriptions are changing with time. Let's use linear regression modeling to find the individual drugs that are being prescribed more often now compared to two years ago.
+
+
+```{r time_models, dependson="opioids_tidy"}
+library(broom)
+
+opioids_by_month <- opioids_tidy %>%
+    group_by(Name, Date) %>%
+    summarise(Pills = sum(Pills))
+
+time_models <- opioids_by_month %>%    
+    nest(-Name) %>%
+    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+    unnest(map(models, tidy)) %>%
+    filter(term == "Date") %>%
+    arrange(desc(estimate))
+    
+time_models    
+```
+
+Which drugs are being prescribed *more*? These are the five fastest growing over this time period.
+
+```{r fastest_growing, dependson="time_models", fig.width=8, fig.height=6}
+opioids_by_month %>%
+    inner_join(time_models %>%
+                   top_n(5, estimate)) %>%
+    ggplot(aes(Date, Pills, color = Name)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "Tramadol??? and codeine??? appear to be the biggest contributors")
+```
+
+Are there drugs which are decreasing in number of prescriptions?
+
+```{r fastest_shrinking, dependson="time_models", fig.width=8, fig.height=6}
+opioids_by_month %>%
+    inner_join(time_models %>%
+                   top_n(-5, estimate)) %>%
+    ggplot(aes(Date, Pills, color = Name)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "Hydrocodone use is on the decline")
+```
+
+
+## Where is opioid use changing?
+
+Let's use linear modeling to find counties where opioid use is changing.
+
+```{r county_models, dependson="opioids_tidy"}
+library(broom)
+
+opioids_by_county <- opioids_tidy %>%
+    group_by(County, Date) %>%
+    summarise(Pills = sum(Pills))
+
+county_models <- opioids_by_county %>%    
+    nest(-County) %>%
+    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+    unnest(map(models, tidy)) %>%
+    filter(term == "Date") %>%
+    arrange(desc(estimate))
+    
+county_models    
+```
+
+Which counties have seen the biggest increases?
+
+```{r growing_counties, dependson="county_models", fig.width=8, fig.height=6}
+opioids_by_county %>%
+    inner_join(county_models %>%
+                   top_n(5, estimate)) %>%
+    ggplot(aes(Date, Pills, color = County)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "Dallas, Tarrant, and Denton are seeing the fastest growth")
+```
+
+
+What are counties that are experiencing decreases?
+
+```{r shrinking_counties, dependson="county_models", fig.width=8, fig.height=6}
+opioids_by_county %>%
+    inner_join(county_models %>%
+                   top_n(-5, estimate)) %>%
+    ggplot(aes(Date, Pills, color = County)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Opioid prescriptions in Texas",
+         subtitle = "Harris and Travis counties are seeing decreases (or near decreases)")
+```
+
+
+
+## Connecting to Census data
+
+Let's download some Census data to connect to this opioid prescription data.
+
+```{r}
+library(tidycensus)
+
+population <- get_acs(geography = "county", 
+                      variables = "B01003_001", 
+                      state = "TX",
+                      geometry = TRUE) 
+
+population
+
+household_income <- get_acs(geography = "county", 
+                            variables = "B19013_001", 
+                            state = "TX",
+                            geometry = TRUE) 
+
+household_income
+```
+
+
+
+```{r}
+opioids_joined <- opioids_by_county %>% 
+    group_by(County) %>% 
+    summarise(Pills = median(Pills)) %>% 
+    mutate(County = str_to_lower(str_c(County, " County, Texas")),
+           County = ifelse(County == "de witt county, texas",
+                           "dewitt county, texas", County)) %>%
+    inner_join(population %>% mutate(County = str_to_lower(NAME)), by = "County") %>%
+    mutate(OpioidRate = Pills / estimate * 1e3)
+
+```
+
+
+#### Opioid prescription rate in the top 10 most populous Texas zip codes
+
+```{r dependson="texas_opioids"}
+opioids_joined %>% 
+    top_n(10, estimate) %>%
+    arrange(desc(estimate)) %>%
+    select(NAME, OpioidRate) %>%
+    kable(col.names = c("County", "Median monthly pills per 1k population"))
+```
+
+
+We can also map the state as a whole.
+
+```{r make_map, dependson="opioids_joined"}
+library(sf)
+library(leaflet)
+library(stringr)
+
+opioids_map <- opioids_joined %>%
+    mutate(OpioidRate = ifelse(OpioidRate > 1.6e4, 1.6e4, OpioidRate))
+
+pal <- colorNumeric(palette = "viridis", domain = opioids_map$OpioidRate)
+
+opioids_map %>%
+    st_as_sf() %>%
+    st_transform(crs = "+init=epsg:4326") %>%
+    leaflet(width = "100%") %>%
+    addProviderTiles(provider = "CartoDB.Positron") %>%
+    addPolygons(popup = ~ str_sub(County, end = -7),
+                stroke = FALSE,
+                smoothFactor = 0,
+                fillOpacity = 0.7,
+                color = ~ pal(OpioidRate)) %>%
+    addLegend("bottomright", 
+              pal = pal, 
+              values = ~ OpioidRate,
+              title = "Monthly pills\nper 1k population",
+              opacity = 1)
+```
+
+
+Low rates in the Rio Grande Valley, high rates in north and east Texas
+
+
+```{r}
+opioids_joined %>% 
+    filter(OpioidRate < 2e4) %>%
+    select(-geometry, -variable, -moe) %>%
+    rename(Population = estimate) %>%
+    inner_join(household_income %>%
+                   as.data.frame() %>%
+                   select(-geometry, -variable) %>%
+                   rename(Income = estimate)) %>%
+    ggplot(aes(Income, OpioidRate)) +
+    geom_point(alpha = 0.7, size = 2) +
+    scale_x_continuous(labels = scales::dollar_format()) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    labs(x = "Median household income", 
+         y = "Median monthly prescriped pills per 1k population")
+```
+
+
+Not related to income
+
+
+```{r texas_race}
+race_vars <- c("P0050003", "P0050004", "P0050006", "P0040003")
+
+texas_race <- get_decennial(geography = "county", 
+                            variables = race_vars, 
+                            state = "TX",
+                            summary_var = "P0010001") 
+
+texas_race
+```
+
+
+```{r}
+library(forcats)
+
+texas_race %>%
+    mutate(PercentPopulation = value / summary_value,
+           variable = fct_recode(variable,
+                                 White = "P0050003",
+                                 Black = "P0050004",
+                                 Asian = "P0050006",
+                                 Hispanic = "P0040003")) %>%
+    inner_join(opioids_joined %>% 
+                   filter(OpioidRate < 2e4) %>%
+                   select(GEOID, OpioidRate)) %>%
+    ggplot(aes(PercentPopulation, OpioidRate, color = variable)) +
+    geom_point(size = 2, alpha = 0.4) +
+    geom_smooth(method = "lm", lty = 2, se = FALSE) +
+    facet_wrap(~variable, scales = "free_x") +
+    theme(legend.position="none") +
+    scale_x_continuous(labels = scales::percent_format()) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    labs(x = "% of county population in that racial/ethnic group",
+         y = "Median monthly pills prescribed per 1k population")
+```
+
+The more white a county is, the higher the rate of opioid prescription there. The more Hispanic a county is, the lower the rate of opioid prescription there. We did not see an effect with income, though.
+
+We could build a model with both race and income (and anything else we come up with) and see what has an effect when you control for all of it. Looks like it will be race but *not* income, i.e., poorer counties with large white populations have high rates of opioid use.
+
+
+
