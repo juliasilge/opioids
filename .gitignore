@@ -4,6 +4,8 @@
 .Ruserdata
 *cache
 *html
+*docx
+*pdf
 rsconnect/
 cb_2015*
 tl_2013*
