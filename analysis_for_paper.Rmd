@@ -1,0 +1,608 @@
+---
+title: "County Level Texas Controlled Substance Prescription Data"
+author: "Julia Silge"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(cache = TRUE,
+                      warning = FALSE, message = FALSE, 
+                      dpi = 180)
+options(width=80, tigris_use_cache = TRUE)
+library(ggplot2)
+library(silgelib)
+library(scales)
+theme_set(theme_plex())
+```
+
+
+## Clean and tidy controlled substance utilization data
+
+Let's open up the dataset and start munging and preparing it.
+
+```{r opioids_raw}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+
+path <- "CountyDrugPillQty_2017_07.xlsx"
+
+opioids_raw <- path %>%
+    excel_sheets() %>%
+    set_names() %>%
+    map_df(~ read_excel(path = path, sheet = .x), .id = "sheet") %>%
+    mutate(Date = dmy(str_c("01-", sheet))) %>%
+    select(-sheet) %>%
+    rename(Name = `Generic Name`)
+```
+
+
+```{r opioids_tidy, dependson="opioids_raw"}
+library(googlesheets)
+
+categories_sheet <- gs_title("Drug categories")
+drug_categories <- categories_sheet %>%
+    gs_read("Sheet1", verbose = FALSE) %>%
+    rename(Name = `Generic Name`)
+
+opioids_tidy <- opioids_raw %>%
+    gather(County, Pills, ANDERSON:ZAVALA) %>%
+    mutate(Pills = ifelse(Pills > 1e10, NA, Pills)) %>%
+    replace_na(replace = list(Pills = 0)) %>%
+    mutate(County = str_to_title(County)) %>%
+    left_join(drug_categories, by = "Name") %>%
+    select(County, Date, Name, Category, Schedule, Pills) %>%
+    filter(Name != "Unspecified")
+
+opioids_tidy
+```
+
+In this step, we removed the very small number of prescriptions that were missing drug and schedule information ("unspecified"). Now it's ready to go!
+
+## Total number of pills prescribed over time
+
+What does the overall pattern of pills prescribed looked like?
+
+```{r total, dependson="opioids_tidy", fig.width=7, fig.height=5, fig.cap="Controlled substance prescriptions in Texas"}
+opioids_tidy %>%
+    group_by(Date) %>%
+    summarise(Pills = sum(Pills)) %>%
+    ggplot(aes(Date, Pills)) +
+    geom_smooth(method = "lm") +
+    geom_line(size = 1.5, alpha = 0.7) +
+    expand_limits(y = 0) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Controlled substance prescriptions in Texas",
+         subtitle = "The median number of pills prescribed per month in Texas during this time period is 200 million")
+```
+
+We see evidence for modest growth over this time period. We would need to compare to the population growth in the same time period to make a meaningful statement about the rate.
+
+USE CENSUS DATA TO MEASURE TX GROWTH FROM 2015 to 2017
+
+## Which drugs are growing or shrinking the fastest?
+
+Let's examine how these prescriptions are changing with time. Let's use linear regression modeling to find the individual drugs that are being prescribed more often now compared to two years ago. Let's start with the schedules (II, III, IV, V).
+
+```{r schedule, dependson="opioids_tidy", fig.width=7, fig.height=5, fig.cap="Controlled substance prescriptions by schedule"}
+opioids_tidy %>%
+    count(Schedule, wt = Pills, sort = TRUE) %>%
+    mutate(Percent = percent(n / sum(n))) %>%
+    select(-n) %>%
+    kable(col.names = c("Schedule", "% of total pills over this time period"))
+
+opioids_tidy %>%
+    count(Schedule, Date, wt = Pills) %>%
+    mutate(Schedule = factor(Schedule, levels = c("II", "III", "IV", "V",
+                                                  "Unspecified"))) %>%
+    ggplot(aes(Date, n, color = Schedule)) +
+    geom_line(alpha = 0.8, size = 1.5) +
+    expand_limits(y = 0) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Controlled substance prescriptions by schedule",
+         subtitle = "Schedule IV drugs account for the most doses, with Schedule II close behind")
+```
+
+This looks pretty flat, but let's fit some models.
+
+```{r schedule_models, dependson="opioids_tidy"}
+library(broom)
+
+schedule_by_month <- opioids_tidy %>%
+    group_by(Schedule, Date) %>%
+    summarise(Pills = sum(Pills))
+
+time_models <- schedule_by_month %>%    
+    nest(-Schedule) %>%
+    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+    unnest(map(models, tidy)) %>%
+    filter(term == "Date") %>%
+    arrange(desc(estimate))
+
+time_models %>%
+    kable()
+```
+
+These models are all asking the question, "What is the rate of change of doses prescribed with time?" The p-values are all high (all > 0.05), indicating that we aren't seeing increases or decreases for any schedule, just like we see in the plot. The overall numbers of pills prescribed per month is mostly flat.
+
+Now let's look at specific drug categories like opioid, stimulant, sedative, and so forth. What are the top 10?
+
+```{r}
+opioids_tidy %>%
+    count(Category, wt = Pills, sort = TRUE) %>%
+    mutate(Percent = percent(n / sum(n))) %>%
+    top_n(10, n) %>%
+    select(-n) %>%
+    kable(col.names = c("Schedule", "% of total pills over this time period"))
+
+```
+
+Opioids are by far dominant in these controlled substance prescriptions. Let's fit some models, including adjusting the p-value for multiple comparisons.
+
+```{r time_models, dependson="opioids_tidy"}
+category_by_month <- opioids_tidy %>%
+    group_by(Category, Date) %>%
+    summarise(Pills = sum(Pills))
+
+time_models <- category_by_month %>%    
+    nest(-Category) %>%
+    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+    unnest(map(models, tidy)) %>%
+    filter(term == "Date") %>%
+    mutate(p.value = p.adjust(p.value)) %>%
+    arrange(desc(estimate))
+
+time_models %>%
+    kable()
+```
+
+
+
+Which drugs are being prescribed *more* or *less*? These are the drugs that are show evidence of growing or shrinking over this time period, at the p < 0.05 level.
+
+```{r fastest_growing, dependson="time_models", fig.width=8, fig.height=5, fig.cap="Growing and shrinking controlled substances in Texas"}
+opioids_tidy %>%
+    inner_join(time_models %>%
+                   filter(p.value < 0.05), by = "Category") %>%
+    count(Date, Category, estimate, wt = Pills) %>%
+    ggplot(aes(Date, n, color = estimate > 0)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    facet_wrap(~Category, nrow = 2, scales = "free_y") +
+    theme(legend.position="none") +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Growing and shrinking controlled substances in Texas",
+         subtitle = "Amphetamines are being prescribed more, and barbiturates are being prescribed less")
+```
+
+## Where is controlled substance use changing?
+
+Let's use linear modeling to find counties where controlled substance use is changing.
+
+```{r county_models, dependson="opioids_tidy"}
+library(broom)
+
+opioids_by_county <- opioids_tidy %>%
+    group_by(County, Date) %>%
+    summarise(Pills = sum(Pills))
+
+county_models <- opioids_by_county %>%    
+    nest(-County) %>%
+    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+    unnest(map(models, tidy)) %>%
+    filter(term == "Date") %>%
+    arrange(desc(estimate))
+
+county_models    
+```
+
+Which counties have seen the biggest increases?
+
+```{r growing_counties, dependson="county_models", fig.width=8, fig.height=6, fig.cap="Counties experiencing increases in controlled substance prescriptions"}
+opioids_by_county %>%
+    inner_join(county_models %>%
+                   top_n(5, estimate)) %>%
+    ggplot(aes(Date, Pills, color = County)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Controlled substance prescriptions in Texas",
+         subtitle = "Dallas, Tarrant, and Denton are seeing the fastest growth")
+```
+
+
+What are counties that are experiencing decreases?
+
+```{r shrinking_counties, dependson="county_models", fig.width=8, fig.height=6, fig.cap="Counties not experiencing increases in controlled substance prescriptions"}
+opioids_by_county %>%
+    inner_join(county_models %>%
+                   top_n(-5, estimate)) %>%
+    ggplot(aes(Date, Pills, color = County)) +
+    geom_line(size = 1.5, alpha = 0.8) +
+    geom_smooth(method = "lm", se = FALSE, lty = 2) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    expand_limits(y = 0) +
+    theme(legend.title=element_blank()) +
+    labs(x = NULL, y = "Pills prescribed per month",
+         title = "Controlled substance prescriptions in Texas",
+         subtitle = "Harris and Travis counties are seeing decreases (or near decreases)")
+```
+
+
+
+## Connecting to Census data
+
+Let's download some Census data to connect to this controlled substance prescription data.
+
+```{r}
+library(tidycensus)
+
+population <- get_acs(geography = "county", 
+                      variables = "B01003_001", 
+                      state = "TX",
+                      geometry = TRUE) 
+
+population
+
+household_income <- get_acs(geography = "county", 
+                            variables = "B19013_001", 
+                            state = "TX",
+                            geometry = TRUE) 
+
+household_income
+```
+
+To look at geographical patterns, we will take the median number of pills prescribed per month for each county during the time we have data for.
+
+```{r}
+opioids_joined <- opioids_by_county %>% 
+    group_by(County) %>% 
+    summarise(Pills = median(Pills)) %>% 
+    mutate(County = str_to_lower(str_c(County, " County, Texas")),
+           County = ifelse(County == "de witt county, texas",
+                           "dewitt county, texas", County)) %>%
+    inner_join(population %>% mutate(County = str_to_lower(NAME)), by = "County") %>%
+    mutate(OpioidRate = Pills / estimate * 1e3)
+
+```
+
+
+#### Controlled substance prescription rate in the top 10 most populous Texas counties
+
+```{r dependson="texas_opioids"}
+opioids_joined %>% 
+    top_n(10, estimate) %>%
+    arrange(desc(estimate)) %>%
+    select(NAME, OpioidRate) %>%
+    kable(col.names = c("County", "Median monthly pills per 1k population"))
+```
+
+These rates vary a lot; the controlled substance prescription rate in Tarrant County is almost 40% higher than the rate in Harris County.
+
+We can also map the state as a whole.
+
+```{r make_map, dependson="opioids_joined", fig.width=8, fig.height=5, fig.cap="Mapping controlled substance prescriptions across Texas"}
+library(sf)
+library(viridis)
+
+opioids_map <- opioids_joined %>%
+    mutate(OpioidRate = ifelse(OpioidRate > 1.6e4, 1.6e4, OpioidRate))
+
+opioids_map %>%
+    st_as_sf() %>%
+    ggplot(aes(fill = OpioidRate, color = OpioidRate)) + 
+    geom_sf() + 
+    coord_sf() + 
+    scale_fill_viridis(labels = comma_format()) + 
+    scale_color_viridis(guide = FALSE) +
+    labs(fill = "Monthly pills\nper 1k population")
+
+```
+
+
+There are low rates in the Rio Grande Valley and high rates in north and east Texas.
+
+Is there a direct relationship with income? Do we see connections to the financial status of a county?
+
+
+```{r, fig.width=7, fig.height=5, fig.cap="Income and controlled substance prescriptions by county"}
+opioids_joined %>% 
+    filter(OpioidRate < 2e4) %>%
+    group_by(GEOID, Population = estimate) %>% 
+    summarise(OpioidRate = median(OpioidRate)) %>%
+    inner_join(household_income %>%
+                   as.data.frame() %>%
+                   select(-geometry, -variable) %>%
+                   rename(Income = estimate)) %>%
+    ggplot(aes(Income, OpioidRate, size = Population)) +
+    geom_point(alpha = 0.7) +
+    geom_smooth(method = "lm", show.legend = FALSE) +
+    scale_x_continuous(labels = scales::dollar_format()) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    labs(x = "Median household income", 
+         y = "Median monthly prescribed pills per 1k population",
+         title = "Income and controlled substance prescriptions",
+         subtitle = "There is no clear relationship between income and prescriptions")
+```
+
+
+Not really. There is no strong relationship here apparent visually, and this is confirmed by modeling (no significant linear relationship). We *can* notice that all the extremely populous counties are low in the plot, with lower controlled substance rates compared to counties of similar income.
+
+What about race?
+
+```{r texas_race}
+race_vars <- c("P0050003", "P0050004", "P0050006", "P0040003")
+
+texas_race <- get_decennial(geography = "county", 
+                            variables = race_vars, 
+                            state = "TX",
+                            summary_var = "P0010001") 
+
+texas_race
+```
+
+
+```{r, fig.width=7, fig.height=7, fig.cap="Race and controlled substance prescriptions by county"}
+race_joined <- texas_race %>%
+    mutate(PercentPopulation = value / summary_value,
+           variable = fct_recode(variable,
+                                 White = "P0050003",
+                                 Black = "P0050004",
+                                 Asian = "P0050006",
+                                 Hispanic = "P0040003")) %>%
+    inner_join(opioids_joined %>%
+                   filter(OpioidRate < 2e4) %>%
+                   group_by(GEOID) %>% 
+                   summarise(OpioidRate = median(OpioidRate)))
+
+race_joined %>%
+    rename(Population = summary_value) %>%
+    ggplot(aes(PercentPopulation, OpioidRate, 
+               size = Population, color = variable)) +
+    geom_point(alpha = 0.4) +
+    #geom_smooth(method = "lm", lty = 2, se = FALSE) +
+    facet_wrap(~variable) +
+    #theme(legend.position="none") +
+    scale_x_continuous(labels = scales::percent_format()) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    scale_color_discrete(guide = FALSE) +
+    labs(x = "% of county population in that racial/ethnic group",
+         y = "Median monthly pills prescribed per 1k population",
+         title = "Race and controlled substance prescriptions",
+         subtitle = "The more white a county is, the higher the median monthly pills prescribed there",
+         size = "County\npopulation")
+```
+
+The more white a county is, the higher the rate of controlled substance prescription there. The more Hispanic a county is, the lower the rate of controlled substance prescription there. Remember that we did not see an effect with income, though.
+
+We can build a model to predict the monthly prescriptions with both race and income and see what has an effect when you control for both. Using the simple exploratory model below, it looks like it may be an interaction of race and income, i.e., poorer counties with large white populations have high rates of controlled substance use.
+
+
+```{r, fig.width=7, fig.height=5}
+model_opioids <- race_joined %>%
+    select(GEOID, OpioidRate, TotalPop = summary_value,
+           variable, PercentPopulation) %>%
+    spread(variable, PercentPopulation) %>%
+    left_join(household_income %>% 
+                  select(GEOID, Income = estimate)) %>%
+    select(-geometry, -GEOID) %>%
+    lm(OpioidRate ~ Income * White, data = .)
+
+summary(model_opioids)
+```
+
+We can explore that kind of interaction visually.
+
+```{r, fig.width=7, fig.height=5, fig.cap="White population, income, and controlled substance usage by county"}
+race_joined %>%
+    filter(variable == "White") %>%
+    left_join(household_income %>% 
+                  as.data.frame() %>% 
+                  select(GEOID, Income = estimate)) %>%
+    ggplot(aes(PercentPopulation, OpioidRate, color = Income)) +
+    geom_point(size = 3, alpha = 0.8) +
+    scale_color_viridis_c(labels = scales::dollar_format()) +
+    scale_x_continuous(labels = scales::percent_format()) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    labs(x = "% of county population that is white",
+         y = "Median monthly pills prescribed per 1k population",
+         title = "White population, income, and controlled substance usage",
+         subtitle = "At the same proportion of white population, poorer counties have higher controlled substance usage")
+```
+
+
+
+```{r, fig.width=8, fig.height=5, fig.cap="How white population, income, and controlled substance usage interact"}
+race_joined %>%
+    filter(variable == "White") %>%
+    left_join(household_income %>% 
+                  as.data.frame() %>% 
+                  select(GEOID, Income = estimate)) %>%
+    filter(!is.na(Income)) %>%
+    mutate(Income = ifelse(Income <= median(Income, na.rm = TRUE), 
+                           "Low income", "High income"),
+           PercentPopulation = cut_width(PercentPopulation, 0.1)) %>%
+    group_by(PercentPopulation, Income) %>%
+    summarise(OpioidRate = median(OpioidRate)) %>%
+    complete(PercentPopulation, Income) %>%
+    ggplot(aes(PercentPopulation, OpioidRate, fill = Income)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    labs(x = "% of county population that is white",
+         y = "Median monthly pills prescribed per 1k population",
+         title = "White population, income, and controlled substance usage",
+         subtitle = "The more white a county is, the more low income is associated with more controlled substance usage")
+```
+
+
+This plot illustrates the interaction between white population percentage and income. The difference in controlled substance usage between lower and higher income counties changes along the spectrum of counties' population that is white.
+
+The first effect to notice here is that the more white a county is, the higher the rate of controlled substance prescriptions. The second thing, though, is to compare the heights of the two sets of bars in each bin. In less white counties, higher income is associated with more controlled substance prescriptions but in more white counties, lower income is associated with more prescriptions. The effect of income on the prescription rate switches sign, from positive to negative.
+
+Here is another way to visualize this that might make it more clear.
+
+```{r, fig.width=8, fig.height=5, fig.cap="How white population, income, and controlled substance usage interact"}
+race_joined %>%
+    filter(variable == "White") %>%
+    left_join(household_income %>% 
+                  as.data.frame() %>% 
+                  select(GEOID, Income = estimate)) %>%
+    filter(!is.na(Income)) %>%
+    mutate(Income = ifelse(Income <= median(Income, na.rm = TRUE), 
+                           "Low income", "High income"),
+           PercentPopulation = cut_width(PercentPopulation, 0.1)) %>%
+    group_by(PercentPopulation, Income) %>%
+    summarise(OpioidRate = median(OpioidRate)) %>%
+    complete(PercentPopulation, Income) %>%
+    ggplot(aes(PercentPopulation, OpioidRate, color = Income, group = Income)) +
+    geom_line(size = 1.2, alpha = 0.8) +
+    scale_y_continuous(labels = scales::comma_format(),
+                       limits = c(0, NA)) +
+    labs(x = "% of county population that is white",
+         y = "Median monthly pills prescribed per 1k population",
+         title = "White population, income, and controlled substance usage",
+         subtitle = "The more white a county is, the more low income is associated with more controlled substance usage")
+```
+
+
+
+
+## Connecting to overdoses
+
+We can also use the data gathered on overdoses due to prescriptions controlled substances and other drugs to see what connections there are.
+
+```{r}
+
+path <- "UTSouthwestern170731Opioids.xls"
+
+overdoses_tidy <- path %>%
+    excel_sheets() %>%
+    set_names() %>%
+    map_df(~ read_excel(path = path, sheet = .x, skip = 9), .id = "sheet") %>%
+    gather(Date, Overdoses, `201301`:`201706`) %>%
+    mutate(Date = ymd(str_c(Date, "01")),
+           Overdoses = case_when(Overdoses == "*" ~ "Less than 5",
+                                 as.numeric(Overdoses) < 10 ~ "5 to 10",
+                                 as.numeric(Overdoses) > 10 ~ "More than 10",
+                                 is.na(Overdoses) ~ "Zero"),
+           Overdoses = factor(Overdoses, levels = c("Zero", "Less than 5",
+                                                    "5 to 10", "More than 10")))
+```
+
+
+
+```{r, fig.width=8, fig.height=7, fig.cap="Overdoses and prescriptions in Texas counties"}
+overdoses_tidy %>%
+    inner_join(opioids_by_county %>%
+                   ungroup %>%
+                   mutate(County = toupper(County)), 
+               by = c("County", "Date")) %>%
+    filter(!is.na(Overdoses)) %>%
+    ggplot(aes(Overdoses, Pills, fill = sheet)) +
+    geom_boxplot(outlier.alpha = 0.5, alpha = 0.8,
+                 show.legend = FALSE, position = "dodge") +
+    facet_wrap(~sheet) +
+    scale_y_log10() +
+    labs(y = "Median monthly pills prescribed",
+         title = "Overdoses and prescriptions in Texas counties",
+         subtitle = "Counties with higher rates of prescriptions have higher rates of overdoses from all classes of drugs")
+```
+
+Having higher rates of overdoses (more than 10 in a month) is rare but we do see that counties with higher numbers of overdoses are the counties with higher numbers of controlled substance prescriptions. The counties with zero overdoses have a broad range of controlled substance prescription rates.
+
+We see that having higher prescriptions rates is associated with higher overdoses for *all* types of drugs. We could look at how many more overdoses there are and see if the increase is larger for, say, heroin and opioids than for unrelated drugs.
+
+```{r}
+overdoses_joined <- overdoses_tidy %>%
+    left_join(opioids_joined %>%
+                  transmute(County = toupper(str_replace_all(County, " county, texas", "")),
+                            Population = estimate,
+                            Pills) %>%
+                  mutate(County = ifelse(County == "DEWITT",
+                                         "DE WITT", County))) %>%
+    filter(!is.na(Overdoses)) %>%
+    mutate(OverdosesNumber = case_when(Overdoses == "Zero" ~ 0,
+                                       Overdoses == "Less than 5" ~ 3,
+                                       Overdoses == "5 to 10" ~ 7,
+                                       Overdoses == "More than 10" ~ 10))
+
+model_results <- overdoses_joined %>%
+    nest(-sheet) %>%
+    mutate(models = map(data, ~ glm(OverdosesNumber ~ Population + Pills, data = ., family = "poisson"))) %>%
+    unnest(map(models, tidy)) %>%
+    filter(term != "(Intercept)") %>%
+    arrange(sheet) %>%
+    select(-statistic, -p.value) 
+
+library(ggrepel)
+
+model_results %>%
+    select(-std.error) %>%
+    spread(term, estimate) %>%
+    left_join(model_results %>%
+                  select(-estimate) %>%
+                  spread(term, std.error),
+              by = "sheet",
+              suffix = c("", "Error")) %>%
+    ggplot(aes(Population, Pills, label = sheet)) +
+    geom_hline(size = 1.5, lty = 2, color = "gray50",
+               yintercept = 0, alpha = 0.5) +
+    geom_vline(size = 1.5, lty = 2, color = "gray50",
+               xintercept = 0, alpha = 0.5) +
+    geom_errorbar(aes(ymin = Pills - PillsError,
+                      ymax = Pills + PillsError),
+                  color = "gray80", width = 5e-8) +
+    geom_errorbarh(aes(xmin = Population - PopulationError,
+                       xmax = Population + PopulationError),
+                   color = "gray80") +
+    geom_text_repel(family = "IBMPlexSans-Medium") +
+    geom_point() +
+    labs(x = "Effect of increasing population on overdoses",
+         y = "Effect of increasing monthly prescriptions on overdoses",
+         title = "Overdoses, prescriptions, and population in Texas counties",
+         subtitle = "All types of overdoses except cocaine increase with controlled substance prescriptions\nCocaine overdoses increase with population\nMethamphetamine, benzodiazepine, and opioid overdoses increase with controlled substance prescriptions")
+```
+
+The data on overdoses by type
+
+
+```{r}
+overdoses_map <- opioids_joined %>%
+    select(County) %>%
+    left_join(overdoses_tidy %>%
+                  mutate(OverdosesNumber = case_when(Overdoses == "Zero" ~ 0,
+                                                     Overdoses == "Less than 5" ~ 3,
+                                                     Overdoses == "5 to 10" ~ 7,
+                                                     Overdoses == "More than 10" ~ 10)) %>%
+                  group_by(sheet, County) %>%
+                  summarise(Overdoses = mean(OverdosesNumber, na.rm = TRUE)) %>%
+                  ungroup %>%
+                  mutate(County = if_else(County == "DEWITT", "DE WITT", County),
+                         County = str_to_lower(County),
+                         County = str_c(County, " county, texas"))) %>%
+    complete(sheet, County, fill = list(Overdoses = 0)) %>%
+    filter(!is.na(sheet)) %>%
+    inner_join(opioids_joined %>% 
+                  select(County, GEOID, NAME, geometry))
+
+overdoses_map %>%
+    st_as_sf() %>%
+    ggplot(aes(fill = Overdoses, color = Overdoses)) + 
+    geom_sf() + 
+    coord_sf() + 
+    facet_wrap(~sheet) +
+    scale_fill_viridis(labels = comma_format()) + 
+    scale_color_viridis(guide = FALSE) +
+    labs(fill = "Overdoses")
+
+```
+
