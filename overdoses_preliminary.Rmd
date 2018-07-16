@@ -1,0 +1,151 @@
+---
+title: "Connecting to overdoses"
+author: "Julia Silge"
+date: "7/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This file contains the code on overdoses, moved from `analysis_for_paper.Rmd`.
+
+## Connecting to overdoses
+
+We can also use the data gathered on overdoses due to prescriptions controlled substances and other drugs to see what connections there are.
+
+```{r}
+
+path <- "UTSouthwestern170731Opioids.xls"
+
+overdoses_tidy <- path %>%
+  excel_sheets() %>%
+  set_names() %>%
+  map_df(~ read_excel(path = path, sheet = .x, skip = 9), .id = "sheet") %>%
+  gather(Date, Overdoses, `201301`:`201706`) %>%
+  mutate(Date = ymd(str_c(Date, "01")),
+         Overdoses = case_when(Overdoses == "*" ~ "Less than 5",
+                               as.numeric(Overdoses) < 10 ~ "5 to 10",
+                               as.numeric(Overdoses) > 10 ~ "More than 10",
+                               is.na(Overdoses) ~ "Zero"),
+         Overdoses = factor(Overdoses, levels = c("Zero", "Less than 5",
+                                                  "5 to 10", "More than 10")))
+```
+
+
+
+```{r, fig.width=8, fig.height=7, fig.cap="Overdoses and prescriptions in Texas counties"}
+overdoses_tidy %>%
+  inner_join(opioids_by_county %>%
+               ungroup %>%
+               mutate(County = toupper(County)), 
+             by = c("County", "Date")) %>%
+  filter(!is.na(Overdoses)) %>%
+  ggplot(aes(Overdoses, Pills, fill = sheet)) +
+  geom_boxplot(outlier.alpha = 0.5, alpha = 0.8,
+               show.legend = FALSE, position = "dodge") +
+  facet_wrap(~sheet) +
+  scale_y_log10() +
+  labs(y = "Median monthly pills prescribed",
+       title = "Overdoses and prescriptions in Texas counties",
+       subtitle = "Counties with higher rates of prescriptions have higher rates of overdoses from all classes of drugs")
+```
+
+Having higher rates of overdoses (more than 10 in a month) is rare but we do see that counties with higher numbers of overdoses in a month are the counties with higher numbers of controlled substance prescriptions. The counties with zero overdoses have a broad range of controlled substance prescription rates.
+
+We see that having higher prescriptions rates in a month is associated in raw number with higher overdoses in a month for *all* types of drugs. We want to know how controlled substance prescriptions affect this, to see if the increase is larger for, say, heroin and opioids than for unrelated drugs like cocaine, and how this changes when controlling for population (large vs. small counties).
+
+
+```{r, fig.width=9, fig.height=6, fig.cap="Overdoses, prescriptions, and population in Texas counties"}
+overdoses_joined <- overdoses_tidy %>% 
+  group_by(sheet, County, Overdoses) %>% 
+  summarize(Total = n()) %>% 
+  filter(!is.na(Overdoses)) %>% 
+  group_by(sheet, County) %>% 
+  filter(Total == last(Total)) %>%
+  ungroup %>%
+  left_join(opioids_joined %>%
+              transmute(County = toupper(str_replace_all(County, " county, texas", "")),
+                        Population = estimate,
+                        Pills) %>%
+              mutate(County = ifelse(County == "DEWITT",
+                                     "DE WITT", County)))
+
+model_results <- overdoses_joined %>%
+  mutate(Population = scale(Population),
+         Pills = scale(Pills)) %>%
+  nest(-sheet) %>%
+  mutate(models = map(data, ~ ordinal::clm(Overdoses ~ Population + Pills, data = .))) %>%
+  unnest(map(models, tidy)) %>%
+  filter(term %in% c("Population", "Pills")) %>%
+  arrange(sheet) %>%
+  select(-statistic, -p.value) 
+
+library(ggrepel)
+
+model_results %>%
+  select(-std.error) %>%
+  spread(term, estimate) %>%
+  left_join(model_results %>%
+              select(-estimate) %>%
+              spread(term, std.error),
+            by = "sheet",
+            suffix = c("", "Error")) %>%
+  ggplot(aes(Population, Pills, label = sheet)) +
+  geom_hline(size = 1.5, lty = 2, color = "gray50",
+             yintercept = 0, alpha = 0.5) +
+  geom_vline(size = 1.5, lty = 2, color = "gray50",
+             xintercept = 0, alpha = 0.5) +
+  geom_errorbar(aes(ymin = Pills - PillsError,
+                    ymax = Pills + PillsError),
+                color = "gray80") +
+  geom_errorbarh(aes(xmin = Population - PopulationError,
+                     xmax = Population + PopulationError),
+                 color = "gray80") +
+  geom_text_repel(family = "IBMPlexSans-Medium") +
+  geom_point() +
+  labs(x = "Effect of increasing population on overdoses (scaled)",
+       y = "Effect of increasing monthly prescriptions on overdoses (scaled)",
+       title = "Overdoses, prescriptions, and population in Texas counties",
+       subtitle = "Methamphetamine and heroin overdoses are associated with higher controlled prescription rates")
+```
+
+Overdoses are rare overall so we are limited in how precisely we can measure how they depend on other quantities at a population level. When controlling for population, the effect size on overdoses from increasing monthly controlled substance prescriptions is significant for methamphetamines and heroin but not for any other category of overdoses, including opioids themselves. (Remember that the controlled substance prescriptions are dominated by opioids.) Prescription opioid and benzodiazepine overdoses increase with population, but we do not see evidence in this dataset that they are related to increasing prescriptions.
+
+Let's look at how the overdoses are distributed.
+
+```{r, fig.width=15, fig.height=4, fig.cap="Monthly mean overdoses in Texas counties"}
+overdoses_map <- opioids_joined %>%
+  select(County) %>%
+  left_join(overdoses_tidy %>%
+              mutate(OverdosesNumber = case_when(Overdoses == "Zero" ~ 0,
+                                                 Overdoses == "Less than 5" ~ 3,
+                                                 Overdoses == "5 to 10" ~ 7,
+                                                 Overdoses == "More than 10" ~ 10)) %>%
+              group_by(sheet, County) %>%
+              summarise(Overdoses = mean(OverdosesNumber, na.rm = TRUE)) %>%
+              ungroup %>%
+              mutate(County = if_else(County == "DEWITT", "DE WITT", County),
+                     County = str_to_lower(County),
+                     County = str_c(County, " county, texas"))) %>%
+  complete(sheet, County, fill = list(Overdoses = 0)) %>%
+  filter(!is.na(sheet)) %>%
+  inner_join(opioids_joined %>% 
+               select(County, GEOID, NAME, geometry))
+
+overdoses_map %>%
+  st_as_sf() %>%
+  ggplot(aes(fill = Overdoses, color = Overdoses)) + 
+  geom_sf() + 
+  coord_sf() + 
+  facet_wrap(~sheet, nrow = 1) +
+  scale_fill_viridis(labels = comma_format()) + 
+  scale_color_viridis(guide = FALSE) +
+  labs(fill = "Overdoses",
+       title = "Monthly mean overdoses in Texas counties",
+       subtitle = "Only heroin and methamphetamine exhibit evidence of increasing with controlled substance prescriptions, after controlling for population")
+
+```
+
+These maps show that, naturally, there are more overdoses where there are more people. When fitting a model that controls for both population *and* number of pills prescribed, we start to see the differences described above.

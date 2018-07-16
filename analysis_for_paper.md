@@ -1,10 +1,10 @@
 ---
 title: "County Level Texas Controlled Substance Prescription Data"
 author: "Julia Silge"
-date: '2018-04-21'
+date: "2018-07-16"
 output:
-  pdf_document: default
-  html_document: default
+  html_document:
+    keep_md: yes
 ---
 
 
@@ -19,55 +19,108 @@ Let's open up the dataset and start munging and preparing it.
 library(tidyverse)
 library(readxl)
 library(lubridate)
+library(googlesheets)
 
 path <- "CountyDrugPillQty_2017_07.xlsx"
 
 opioids_raw <- path %>%
-    excel_sheets() %>%
-    set_names() %>%
-    map_df(~ read_excel(path = path, sheet = .x), .id = "sheet") %>%
-    mutate(Date = dmy(str_c("01-", sheet))) %>%
-    select(-sheet) %>%
-    rename(Name = `Generic Name`)
+  excel_sheets() %>%
+  set_names() %>%
+  map_df(~ read_excel(path = path, sheet = .x), .id = "sheet") %>%
+  mutate(Date = dmy(str_c("01-", sheet))) %>%
+  select(-sheet) %>%
+  rename(Name = `Generic Name`)
+
+new_opioids_sheet <- gs_title("TX CS Qty By Drug Name-County")
+
+new_opioids_raw <- new_opioids_sheet %>%
+  gs_read("TX CS RX By Generic Name-County",
+          col_types = "cnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+          skip = 4,
+          verbose = FALSE) %>%
+  rename(Name = `Date/Month Filter`)  %>% 
+  mutate(Date = case_when(str_detect(Name, 
+                                     "^[a-zA-Z]{3}-[0-9]{2}$") ~ Name,
+                          TRUE ~ NA_character_)) %>%
+  fill(Date, .direction = "down") %>%
+  select(-`Grand Total`) %>%
+  filter(Name != Date) %>%
+  mutate(Date = dmy(str_c("01-", Date))) %>%
+  select(Name, Date, everything())
 ```
 
+We have overlapping measurements for the same drugs and counties from February to June of 2017. How do these measurements compare to each other?
 
 
 ```r
-library(googlesheets)
+## comparing the counts for the overlapping time period
 
+compare <- opioids_raw %>%
+  filter(Date > "2017-01-01") %>%
+  gather(County, PillsOld, ANDERSON:ZAVALA) %>%
+  inner_join(new_opioids_raw %>% 
+               gather(County, PillsNew, ANDERSON:ZAVALA)) %>%
+  mutate(PercentChange = abs(PillsOld - PillsNew) / PillsOld)
+
+compare %>%    
+  ggplot(aes(PillsOld, PillsNew, color = County)) +
+  geom_abline(color = "gray50", lty = 2, alpha = 0.8, size = 1.6) +
+  geom_point(alpha = 0.4, size = 1.7, show.legend = FALSE) +
+  labs(x = "Count from old data",
+       y = "Count from new data",
+       title = "How close are the prescription quantities in each dataset?",
+       subtitle = "Comparing the same drug in the same county")
+```
+
+![plot of chunk compare](figure/compare-1.png)
+
+Most measurements are close, and the median change is about 20%. The new data is modestly higher in prescription quantity. When we have, it we'll use the new values.
+
+
+```r
 categories_sheet <- gs_title("Drug categories")
 drug_categories <- categories_sheet %>%
-    gs_read("Sheet1", verbose = FALSE) %>%
-    rename(Name = `Generic Name`)
+  gs_read("Sheet1", verbose = FALSE) %>%
+  rename(Name = `Generic Name`) %>%
+  bind_rows(categories_sheet %>%
+              gs_read("Sheet2", verbose = FALSE) %>%
+              rename(Name = `Generic Name`)) %>%
+  filter(Schedule %in% c("II", "III", "IV", "V"))
 
 opioids_tidy <- opioids_raw %>%
-    gather(County, Pills, ANDERSON:ZAVALA) %>%
-    mutate(Pills = ifelse(Pills > 1e10, NA, Pills)) %>%
-    replace_na(replace = list(Pills = 0)) %>%
-    mutate(County = str_to_title(County)) %>%
-    left_join(drug_categories, by = "Name") %>%
-    select(County, Date, Name, Category, Schedule, Pills) %>%
-    filter(Name != "Unspecified")
+  gather(County, PillsOld, ANDERSON:ZAVALA) %>%
+  full_join(new_opioids_raw %>% 
+              gather(County, PillsNew, ANDERSON:ZAVALA),
+            by = c("Name", "Date", "County")) %>%
+  mutate(Pills = coalesce(PillsNew, PillsOld),
+         Pills = ifelse(Pills > 1e10, NA, Pills)) %>%
+  replace_na(replace = list(Pills = 0)) %>%
+  mutate(County = str_to_title(County)) %>% 
+  select(-PillsNew, -PillsOld) %>%
+  left_join(drug_categories, by = "Name") %>%
+  select(County, Date, Name, Category, Schedule, Pills) %>%
+  filter(Name != "Unspecified",
+         !is.na(Schedule)) %>%
+  filter(Date < "2018-05-01")
 
 opioids_tidy
 ```
 
 ```
-## # A tibble: 919,988 x 6
-##    County   Date       Name                     Category   Schedule  Pills
-##    <chr>    <date>     <chr>                    <chr>      <chr>     <dbl>
-##  1 Anderson 2015-04-01 ACETAMINOPHEN WITH CODE… Opioid     III      37950.
-##  2 Anderson 2015-04-01 ACETAMINOPHEN/CAFFEINE/… Opioid     III        380.
-##  3 Anderson 2015-04-01 ALPRAZOLAM               Benzodiaz… IV       52914.
-##  4 Anderson 2015-04-01 AMITRIPTYLINE HCL/CHLOR… Benzodiaz… IV         180.
-##  5 Anderson 2015-04-01 AMPHETAMINE SULFATE      Amphetami… IV          60.
-##  6 Anderson 2015-04-01 ARMODAFINIL              Stimulant  IV         824.
-##  7 Anderson 2015-04-01 ASPIRIN/CAFFEINE/DIHYDR… Opioid     III          0.
-##  8 Anderson 2015-04-01 BENZPHETAMINE HCL        Amphetami… III         30.
-##  9 Anderson 2015-04-01 BROMPHENIRAMINE MALEATE… Opioid     V            0.
-## 10 Anderson 2015-04-01 BROMPHENIRAMINE MALEATE… Opioid     III          0.
-## # ... with 919,978 more rows
+## # A tibble: 1,234,622 x 6
+##    County   Date       Name                           Category   Schedule Pills
+##    <chr>    <date>     <chr>                          <chr>      <chr>    <dbl>
+##  1 Anderson 2015-04-01 ACETAMINOPHEN WITH CODEINE PH… Opioid     III      37950
+##  2 Anderson 2015-04-01 ACETAMINOPHEN/CAFFEINE/DIHYDR… Opioid     III        380
+##  3 Anderson 2015-04-01 ALPRAZOLAM                     Benzodiaz… IV       52914
+##  4 Anderson 2015-04-01 AMITRIPTYLINE HCL/CHLORDIAZEP… Benzodiaz… IV         180
+##  5 Anderson 2015-04-01 AMPHETAMINE SULFATE            Amphetami… IV          60
+##  6 Anderson 2015-04-01 ARMODAFINIL                    Stimulant  IV         824
+##  7 Anderson 2015-04-01 ASPIRIN/CAFFEINE/DIHYDROCODEI… Opioid     III          0
+##  8 Anderson 2015-04-01 BENZPHETAMINE HCL              Amphetami… III         30
+##  9 Anderson 2015-04-01 BROMPHENIRAMINE MALEATE/PHENY… Opioid     V            0
+## 10 Anderson 2015-04-01 BROMPHENIRAMINE MALEATE/PSEUD… Opioid     III          0
+## # ... with 1,234,612 more rows
 ```
 
 In this step, we removed the very small number of prescriptions that were missing drug and schedule information ("unspecified"). Now it's ready to go!
@@ -79,20 +132,20 @@ What does the overall pattern of pills prescribed looked like?
 
 ```r
 opioids_tidy %>%
-    group_by(Date) %>%
-    summarise(Pills = sum(Pills)) %>%
-    ggplot(aes(Date, Pills)) +
-    geom_smooth(method = "lm") +
-    geom_line(size = 1.5, alpha = 0.7) +
-    expand_limits(y = 0) +
-    labs(x = NULL, y = "Pills prescribed per month",
-         title = "Controlled substance prescriptions in Texas",
-         subtitle = "The median number of pills prescribed per month in Texas during this time period is 200 million")
+  group_by(Date) %>%
+  summarise(Pills = sum(Pills) / 1e6) %>%
+  ggplot(aes(Date, Pills)) +
+  geom_smooth(method = "lm") +
+  geom_line(size = 1.5, alpha = 0.7) +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = "Pills prescribed per month (million)",
+       title = "Controlled substance prescriptions in Texas",
+       subtitle = "The median number of pills prescribed per month in Texas during this time period is 200 million")
 ```
 
 ![Controlled substance prescriptions in Texas](figure/total-1.png)
 
-We see evidence for modest growth over this time period. We need to compare to the population growth in the same time period to make a meaningful statement about the rate.
+We see evidence for modest decrease over this time period. We need to compare to the population growth in the same time period to make a meaningful statement about the rate.
 
 
 
@@ -100,20 +153,20 @@ We see evidence for modest growth over this time period. We need to compare to t
 library(broom)
 
 fit_growth <- opioids_tidy %>%
-    group_by(Date) %>%
-    summarise(Pills = sum(Pills)) %>%
-    lm(Pills ~ Date, data = .)
+  group_by(Date) %>%
+  summarise(Pills = sum(Pills)) %>%
+  lm(Pills ~ Date, data = .)
 
 growth_rate <- (tidy(fit_growth) %>% 
-                    filter(term == "Date") %>% 
-                    pull(estimate)) / (opioids_tidy %>% 
-                                           group_by(Date) %>% 
-                                           summarise(Pills = sum(Pills)) %>% 
-                                           pull(Pills) %>%
-                                           median())
+                  filter(term == "Date") %>% 
+                  pull(estimate)) / (opioids_tidy %>% 
+                                       group_by(Date) %>% 
+                                       summarise(Pills = sum(Pills)) %>% 
+                                       pull(Pills) %>%
+                                       median())
 ```
 
-The number of pills prescribed per month is growing at about 0.00533% each month, or about 0.0639% each year. This is lower than the rate of Texas' population growth, estimate by the [US Census Bureau at about 1.4% annually](https://www.census.gov/newsroom/press-releases/2017/estimates-idaho.html). Given what we find out further below about the racial/ethnic implications of population level opioid use in Texas *and* what groups are driving population growth in Texas, this likely makes sense.
+The number of pills prescribed per month is changing at about -0.00751% each month, or about -0.0901% each year. This is lower than the rate of Texas' population growth, estimated by the [US Census Bureau at about 1.4% annually](https://www.census.gov/newsroom/press-releases/2017/estimates-idaho.html). Given what we find out further below about the racial/ethnic implications of population level opioid use in Texas *and* what groups are driving population growth in Texas, this likely makes sense.
 
 ## Which drugs are growing or shrinking the fastest?
 
@@ -122,32 +175,32 @@ Let's examine how these prescriptions are changing with time. Let's use linear r
 
 ```r
 opioids_tidy %>%
-    count(Schedule, wt = Pills, sort = TRUE) %>%
-    mutate(Percent = percent(n / sum(n))) %>%
-    select(-n) %>%
-    kable(col.names = c("Schedule", "% of total pills over this time period"))
+  count(Schedule, wt = Pills, sort = TRUE) %>%
+  mutate(Percent = percent(n / sum(n))) %>%
+  select(-n) %>%
+  kable(col.names = c("Schedule", "% of total pills over this time period"))
 ```
 
 
 
 |Schedule |% of total pills over this time period |
 |:--------|:--------------------------------------|
-|IV       |42.6%                                  |
-|II       |36.8%                                  |
-|III      |16.8%                                  |
-|V        |3.7%                                   |
+|IV       |41.7%                                  |
+|II       |37.5%                                  |
+|III      |17.0%                                  |
+|V        |3.8%                                   |
 
 ```r
 opioids_tidy %>%
-    count(Schedule, Date, wt = Pills) %>%
-    mutate(Schedule = factor(Schedule, levels = c("II", "III", "IV", "V",
-                                                  "Unspecified"))) %>%
-    ggplot(aes(Date, n, color = Schedule)) +
-    geom_line(alpha = 0.8, size = 1.5) +
-    expand_limits(y = 0) +
-    labs(x = NULL, y = "Pills prescribed per month",
-         title = "Controlled substance prescriptions by schedule",
-         subtitle = "Schedule IV drugs account for the most doses, with Schedule II close behind")
+  count(Schedule, Date, wt = Pills) %>%
+  mutate(Schedule = factor(Schedule, levels = c("II", "III", "IV", "V",
+                                                "Unspecified"))) %>%
+  ggplot(aes(Date, n, color = Schedule)) +
+  geom_line(alpha = 0.8, size = 1.5) +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = "Pills prescribed per month",
+       title = "Controlled substance prescriptions by schedule",
+       subtitle = "Schedule IV drugs account for the most doses, with Schedule II close behind")
 ```
 
 ![Controlled substance prescriptions by schedule](figure/schedule-1.png)
@@ -159,98 +212,99 @@ This looks pretty flat, but let's fit some models.
 library(broom)
 
 schedule_by_month <- opioids_tidy %>%
-    group_by(Schedule, Date) %>%
-    summarise(Pills = sum(Pills))
+  group_by(Schedule, Date) %>%
+  summarise(Pills = sum(Pills))
 
 time_models <- schedule_by_month %>%    
-    nest(-Schedule) %>%
-    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
-    unnest(map(models, tidy)) %>%
-    filter(term == "Date") %>%
-    arrange(desc(estimate))
+  nest(-Schedule) %>%
+  mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+  unnest(map(models, tidy)) %>%
+  filter(term == "Date") %>%
+  arrange(desc(estimate))
 
 time_models %>%
-    kable()
+  kable()
 ```
 
 
 
-|Schedule |term |   estimate| std.error| statistic|   p.value|
-|:--------|:----|----------:|---------:|---------:|---------:|
-|III      |Date |  7862.8225| 4571.0394|  1.720139| 0.0977647|
-|IV       |Date |  6114.1057| 4828.6464|  1.266215| 0.2171080|
-|V        |Date |   372.2876|  243.4479|  1.529229| 0.1387634|
-|II       |Date | -3592.0228| 2595.3153| -1.384041| 0.1785783|
+|Schedule |term |   estimate| std.error|  statistic|   p.value|
+|:--------|:----|----------:|---------:|----------:|---------:|
+|III      |Date |   2730.857| 3486.1241|  0.7833504| 0.4386903|
+|V        |Date |   -350.583|  149.9851| -2.3374522| 0.0252616|
+|II       |Date |  -5392.202| 1790.4440| -3.0116564| 0.0048008|
+|IV       |Date | -11985.809| 3302.4011| -3.6294224| 0.0008983|
 
-These models are all asking the question, "What is the rate of change of doses prescribed with time?" The p-values are all high (all > 0.05), indicating that we aren't seeing increases or decreases for any schedule, just like we see in the plot. The overall numbers of pills prescribed per month is mostly flat.
+These models are all asking the question, "What is the rate of change of doses prescribed with time?" The p-values are almost all high (all > 0.05), indicating that we aren't seeing increases or decreases for any schedule, just like we see in the plot. The overall numbers of pills prescribed per month is mostly flat.
 
 Now let's look at specific drug categories like opioid, stimulant, sedative, and so forth. What are the top 10?
 
 
 ```r
 opioids_tidy %>%
-    count(Category, wt = Pills, sort = TRUE) %>%
-    mutate(Percent = percent(n / sum(n))) %>%
-    top_n(10, n) %>%
-    select(-n) %>%
-    kable(col.names = c("Schedule", "% of total pills over this time period"))
+  count(Category, wt = Pills, sort = TRUE) %>%
+  mutate(Percent = percent(n / sum(n))) %>%
+  top_n(10, n) %>%
+  select(-n) %>%
+  kable(col.names = c("Schedule", "% of total pills over this time period"))
 ```
 
 
 
 |Schedule                    |% of total pills over this time period |
 |:---------------------------|:--------------------------------------|
-|Opioid                      |55.0%                                  |
-|Benzodiazepine              |20.2%                                  |
-|Amphetamine                 |10.6%                                  |
-|GABA receptor agonist       |3.8%                                   |
+|Opioid                      |55.9%                                  |
+|Benzodiazepine              |19.3%                                  |
+|Amphetamine                 |11.1%                                  |
 |Sedative                    |3.8%                                   |
-|Barbiturate                 |2.2%                                   |
-|Anabolic Steroid            |1.6%                                   |
+|GABA receptor agonist       |3.8%                                   |
+|Barbiturate                 |2.1%                                   |
+|Anabolic Steroid            |1.3%                                   |
 |Stimulant                   |1.0%                                   |
+|Anticonvulsant              |0.6%                                   |
 |Non-benzodiazepine hypnotic |0.5%                                   |
-|Anticonvulsant              |0.5%                                   |
 
 Opioids are by far dominant in these controlled substance prescriptions. Let's fit some models, including adjusting the p-value for multiple comparisons.
 
 
 ```r
 category_by_month <- opioids_tidy %>%
-    group_by(Category, Date) %>%
-    summarise(Pills = sum(Pills))
+  group_by(Category, Date) %>%
+  summarise(Pills = sum(Pills))
 
 time_models <- category_by_month %>%    
-    nest(-Category) %>%
-    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
-    unnest(map(models, tidy)) %>%
-    filter(term == "Date") %>%
-    mutate(p.value = p.adjust(p.value)) %>%
-    arrange(desc(estimate))
+  nest(-Category) %>%
+  mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+  unnest(map(models, tidy)) %>%
+  filter(term == "Date") %>%
+  mutate(p.value = p.adjust(p.value)) %>%
+  arrange(desc(estimate))
 
 time_models %>%
-    kable()
+  kable()
 ```
 
 
 
 |Category                    |term |      estimate|    std.error|   statistic|   p.value|
 |:---------------------------|:----|-------------:|------------:|-----------:|---------:|
-|Benzodiazepine              |Date |  7890.1091912| 4011.7088729|   1.9667701| 0.4228248|
-|Amphetamine                 |Date |  3310.9793829| 1040.8390051|   3.1810677| 0.0350305|
-|NMDA Antagonist             |Date |  1768.3765149| 2177.6886310|   0.8120429| 1.0000000|
-|Anabolic Steroid            |Date |  1640.3016899| 1430.7173738|   1.1464890| 1.0000000|
-|Anticonvulsant              |Date |   279.2566388|   34.3064496|   8.1400623| 0.0000002|
-|Hydroxybutyrate             |Date |   118.5813180|   41.1161393|   2.8840577| 0.0637075|
-|Non-benzodiazepine hypnotic |Date |   114.5364188|   25.8721240|   4.4270203| 0.0019745|
-|Stimulant                   |Date |    99.6909990|  161.7088376|   0.6164845| 1.0000000|
-|Cannabinoid                 |Date |    26.4130968|    4.2404840|   6.2287929| 0.0000211|
-|Phenobarbital               |Date |    -0.1081127|    0.1048886|  -1.0307379| 1.0000000|
-|GABA receptor agonist       |Date |    -1.3689677|  245.5036854|  -0.0055762| 1.0000000|
-|Steroid                     |Date |   -64.0199625|   16.6412557|  -3.8470632| 0.0080634|
-|Serotonin Receptor Agonist  |Date |  -245.6500611|   14.4653548| -16.9819590| 0.0000000|
-|Sedative                    |Date |  -723.3147267|  209.7954668|  -3.4477138| 0.0201241|
-|Opioid                      |Date | -1588.6039402| 5653.2961884|  -0.2810049| 1.0000000|
-|Barbiturate                 |Date | -1867.9520047|  189.2372196|  -9.8709546| 0.0000000|
+|Amphetamine                 |Date |  2348.2617099|  669.2684877|   3.5086991| 0.0113232|
+|Anticonvulsant              |Date |   628.7830872|   44.7212473|  14.0600525| 0.0000000|
+|Cannabinoid                 |Date |     3.4354408|    5.1333999|   0.6692330| 1.0000000|
+|Opioid antagonist           |Date |    -0.0450837|    0.0833197|  -0.5410924| 1.0000000|
+|Phenobarbital               |Date |    -0.0508762|    0.0345908|  -1.4708013| 1.0000000|
+|Non-benzodiazepine hypnotic |Date |    -9.5126252|   19.0694192|  -0.4988419| 1.0000000|
+|Stimulant                   |Date |   -37.9134642|   94.5509162|  -0.4009846| 1.0000000|
+|Steroid                     |Date |  -104.5924121|    9.6345567| -10.8559652| 0.0000000|
+|NMDA Antagonist             |Date |  -141.1792884| 1176.6079118|  -0.1199884| 1.0000000|
+|Serotonin Receptor Agonist  |Date |  -275.4392966|    7.9341568| -34.7156356| 0.0000000|
+|Hydroxybutyrate             |Date |  -457.6104921|   74.6518946|  -6.1299247| 0.0000057|
+|GABA receptor agonist       |Date | -1059.9940658|  160.3633234|  -6.6099532| 0.0000015|
+|Anabolic Steroid            |Date | -1234.9237030|  225.8359175|  -5.4682343| 0.0000388|
+|Sedative                    |Date | -1315.2821309|  126.3179537| -10.4124718| 0.0000000|
+|Barbiturate                 |Date | -1706.0414557|  104.4197493| -16.3383025| 0.0000000|
+|Opioid                      |Date | -5550.5513927| 4076.7680269|  -1.3615078| 1.0000000|
+|Benzodiazepine              |Date | -6085.1176107| 2648.4658639|  -2.2976009| 0.2214334|
 
 Many of these p-values are high, indicating that they are not being prescribed more or less, but at mostly the same rate over this time period.
 
@@ -259,20 +313,20 @@ Which drugs are being prescribed *more* or *less*? These are the drugs that are 
 
 ```r
 opioids_tidy %>%
-    inner_join(time_models %>%
-                   filter(p.value < 0.05), by = "Category") %>%
-    count(Date, Category, estimate, wt = Pills) %>%
-    ggplot(aes(Date, n, color = estimate > 0)) +
-    geom_line(size = 1.5, alpha = 0.8) +
-    geom_smooth(method = "lm", se = FALSE, lty = 2) +
-    scale_y_continuous(labels = scales::comma_format()) +
-    expand_limits(y = 0) +
-    facet_wrap(~Category, nrow = 3, scales = "free_y") +
-    theme(legend.position="none") +
-    theme(legend.title=element_blank()) +
-    labs(x = NULL, y = "Pills prescribed per month",
-         title = "Growing and shrinking controlled substances in Texas",
-         subtitle = "Amphetamines are being prescribed more, and barbiturates are being prescribed less")
+  inner_join(time_models %>%
+               filter(p.value < 0.05), by = "Category") %>%
+  count(Date, Category, estimate, wt = Pills) %>%
+  ggplot(aes(Date, n, color = estimate > 0)) +
+  geom_line(size = 1.5, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, lty = 2) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  expand_limits(y = 0) +
+  facet_wrap(~Category, nrow = 3, scales = "free_y") +
+  theme(legend.position="none") +
+  theme(legend.title=element_blank()) +
+  labs(x = NULL, y = "Pills prescribed per month",
+       title = "Growing and shrinking controlled substances in Texas",
+       subtitle = "Amphetamines are being prescribed more, and barbiturates are being prescribed less")
 ```
 
 ![Growing and shrinking controlled substances in Texas](figure/fastest_growing-1.png)
@@ -286,34 +340,34 @@ Let's use linear modeling to find counties where controlled substance use is cha
 library(broom)
 
 opioids_by_county <- opioids_tidy %>%
-    group_by(County, Date) %>%
-    summarise(Pills = sum(Pills))
+  group_by(County, Date) %>%
+  summarise(Pills = sum(Pills))
 
 county_models <- opioids_by_county %>%    
-    nest(-County) %>%
-    mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
-    unnest(map(models, tidy)) %>%
-    filter(term == "Date") %>%
-    arrange(desc(estimate))
+  nest(-County) %>%
+  mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
+  unnest(map(models, tidy)) %>%
+  filter(term == "Date") %>%
+  arrange(desc(estimate))
 
 county_models    
 ```
 
 ```
-## # A tibble: 254 x 6
-##    County    term  estimate std.error statistic p.value
-##    <chr>     <chr>    <dbl>     <dbl>     <dbl>   <dbl>
-##  1 Dallas    Date     6226.     3696.     1.68   0.105 
-##  2 Tarrant   Date     4063.     1481.     2.74   0.0111
-##  3 Denton    Date      877.      490.     1.79   0.0858
-##  4 Val Verde Date      494.      194.     2.55   0.0173
-##  5 Gregg     Date      463.      202.     2.29   0.0307
-##  6 Bexar     Date      426.      982.     0.434  0.668 
-##  7 Collin    Date      338.      360.     0.937  0.358 
-##  8 Mclennan  Date      277.      242.     1.14   0.263 
-##  9 Ellis     Date      261.      222.     1.17   0.253 
-## 10 Hill      Date      259.      137.     1.89   0.0699
-## # ... with 244 more rows
+## # A tibble: 256 x 6
+##    County  term  estimate std.error statistic       p.value
+##    <chr>   <chr>    <dbl>     <dbl>     <dbl>         <dbl>
+##  1 Potter  Date      733.      92.9     7.89  0.00000000281
+##  2 Gregg   Date      561.      76.4     7.34  0.0000000140 
+##  3 Smith   Date      483.     101.      4.77  0.0000317    
+##  4 Lubbock Date      436.      75.8     5.75  0.00000167   
+##  5 Brazos  Date      322.      64.9     4.96  0.0000181    
+##  6 Fannin  Date      277.      47.0     5.89  0.00000107   
+##  7 Howard  Date      205.      28.6     7.16  0.0000000240 
+##  8 Hopkins Date      202.      33.1     6.09  0.000000590  
+##  9 Denton  Date      201.     220.      0.915 0.366        
+## 10 Bowie   Date      162.      41.8     3.87  0.000450     
+## # ... with 246 more rows
 ```
 
 Which counties have seen the biggest increases?
@@ -321,43 +375,44 @@ Which counties have seen the biggest increases?
 
 ```r
 opioids_by_county %>%
-    inner_join(county_models %>%
-                   top_n(5, estimate)) %>%
-    ggplot(aes(Date, Pills, color = County)) +
-    geom_line(size = 1.5, alpha = 0.8) +
-    geom_smooth(method = "lm", se = FALSE, lty = 2) +
-    scale_y_continuous(labels = scales::comma_format()) +
-    expand_limits(y = 0) +
-    theme(legend.title=element_blank()) +
-    labs(x = NULL, y = "Pills prescribed per month",
-         title = "Controlled substance prescriptions in Texas",
-         subtitle = "Dallas, Tarrant, and Denton are seeing the fastest growth")
+  inner_join(county_models %>%
+               top_n(5, estimate)) %>%
+  ggplot(aes(Date, Pills, color = County)) +
+  geom_line(size = 1.5, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, lty = 2) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  expand_limits(y = 0) +
+  theme(legend.title=element_blank()) +
+  labs(x = NULL, y = "Pills prescribed per month",
+       title = "Controlled substance prescriptions in Texas",
+       subtitle = "Lubbock and Smith counties are seeing the fastest growth")
 ```
 
 ![Counties experiencing increases in controlled substance prescriptions](figure/growing_counties-1.png)
 
+Smith county is the locatin of Tyler, TX.
 
 What are counties that are experiencing decreases?
 
 
 ```r
 opioids_by_county %>%
-    inner_join(county_models %>%
-                   top_n(-5, estimate)) %>%
-    ggplot(aes(Date, Pills, color = County)) +
-    geom_line(size = 1.5, alpha = 0.8) +
-    geom_smooth(method = "lm", se = FALSE, lty = 2) +
-    scale_y_continuous(labels = scales::comma_format()) +
-    expand_limits(y = 0) +
-    theme(legend.title=element_blank()) +
-    labs(x = NULL, y = "Pills prescribed per month",
-         title = "Controlled substance prescriptions in Texas",
-         subtitle = "Harris and Travis counties are seeing decreases (or near decreases)")
+  inner_join(county_models %>%
+               top_n(-5, estimate)) %>%
+  ggplot(aes(Date, Pills, color = County)) +
+  geom_line(size = 1.5, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, lty = 2) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  expand_limits(y = 0) +
+  theme(legend.title=element_blank()) +
+  labs(x = NULL, y = "Pills prescribed per month",
+       title = "Controlled substance prescriptions in Texas",
+       subtitle = "Harris and Collin counties are seeing decreases (or near decreases)")
 ```
 
 ![Counties not experiencing increases in controlled substance prescriptions](figure/shrinking_counties-1.png)
 
-
+Collin County is a populous county that is part of the DFW area.
 
 ## Connecting to Census data
 
@@ -453,13 +508,17 @@ To look at geographical patterns, we will take the median number of pills prescr
 
 ```r
 opioids_joined <- opioids_by_county %>% 
-    group_by(County) %>% 
-    summarise(Pills = median(Pills)) %>% 
-    mutate(County = str_to_lower(str_c(County, " County, Texas")),
-           County = ifelse(County == "de witt county, texas",
-                           "dewitt county, texas", County)) %>%
-    inner_join(population %>% mutate(County = str_to_lower(NAME)), by = "County") %>%
-    mutate(OpioidRate = Pills / estimate * 1e3)
+  ungroup %>%
+  mutate(Date = case_when(Date > "2017-01-01" ~ "2017 and later",
+                          TRUE ~ "Before 2017")) %>%
+  group_by(County, Date) %>% 
+  summarise(Pills = median(Pills)) %>% 
+  ungroup %>%
+  mutate(County = str_to_lower(str_c(County, " County, Texas")),
+         County = ifelse(County == "de witt county, texas",
+                         "dewitt county, texas", County)) %>%
+  inner_join(population %>% mutate(County = str_to_lower(NAME)), by = "County") %>%
+  mutate(OpioidRate = Pills / estimate * 1e3)
 ```
 
 
@@ -468,26 +527,27 @@ opioids_joined <- opioids_by_county %>%
 
 ```r
 opioids_joined %>% 
-    top_n(10, estimate) %>%
-    arrange(desc(estimate)) %>%
-    select(NAME, OpioidRate) %>%
-    kable(col.names = c("County", "Median monthly pills per 1k population"))
+  filter(Date == "2017 and later") %>%
+  top_n(10, estimate) %>%
+  arrange(desc(estimate)) %>%
+  select(NAME, OpioidRate) %>%
+  kable(col.names = c("County", "Median monthly pills per 1k population"))
 ```
 
 
 
 |County                  | Median monthly pills per 1k population|
 |:-----------------------|--------------------------------------:|
-|Harris County, Texas    |                               5846.566|
-|Dallas County, Texas    |                               6356.856|
-|Tarrant County, Texas   |                               8015.746|
-|Bexar County, Texas     |                               7538.256|
-|Travis County, Texas    |                               6659.023|
-|Collin County, Texas    |                               8007.805|
-|El Paso County, Texas   |                               4584.352|
-|Hidalgo County, Texas   |                               3496.856|
-|Denton County, Texas    |                               7877.880|
-|Fort Bend County, Texas |                               5324.904|
+|Harris County, Texas    |                               5794.668|
+|Dallas County, Texas    |                               6300.645|
+|Tarrant County, Texas   |                               7879.951|
+|Bexar County, Texas     |                               7546.366|
+|Travis County, Texas    |                               6558.798|
+|Collin County, Texas    |                               7235.293|
+|El Paso County, Texas   |                               4431.817|
+|Hidalgo County, Texas   |                               3354.772|
+|Denton County, Texas    |                               7845.124|
+|Fort Bend County, Texas |                               5382.699|
 
 These rates vary a lot; the controlled substance prescription rate in Tarrant County is almost 40% higher than the rate in Harris County.
 
@@ -499,22 +559,24 @@ library(sf)
 library(viridis)
 
 opioids_map <- opioids_joined %>%
-    mutate(OpioidRate = ifelse(OpioidRate > 1.6e4, 1.6e4, OpioidRate))
+  mutate(OpioidRate = ifelse(OpioidRate > 1.6e4, 1.6e4, OpioidRate))
 
 opioids_map %>%
-    st_as_sf() %>%
-    ggplot(aes(fill = OpioidRate, color = OpioidRate)) + 
-    geom_sf() + 
-    coord_sf() + 
-    scale_fill_viridis(labels = comma_format()) + 
-    scale_color_viridis(guide = FALSE) +
-    labs(fill = "Monthly pills\nper 1k population")
+  mutate(Date = factor(Date, levels = c("Before 2017", "2017 and later"))) %>%
+  st_as_sf() %>%
+  ggplot(aes(fill = OpioidRate, color = OpioidRate)) + 
+  geom_sf() + 
+  coord_sf() + 
+  facet_wrap(~Date) +
+  scale_fill_viridis(labels = comma_format()) + 
+  scale_color_viridis(guide = FALSE) +
+  labs(fill = "Monthly pills\nper 1k population")
 ```
 
 ![Mapping controlled substance prescriptions across Texas](figure/make_map-1.png)
 
 
-There are low rates in the Rio Grande Valley and high rates in north and east Texas.
+There are low rates in the Rio Grande Valley and high rates in north and east Texas. There has been change over time as controlled prescription rates have decreased.
 
 Is there a direct relationship with income? Do we see connections to the financial status of a county?
 
@@ -522,25 +584,25 @@ Is there a direct relationship with income? Do we see connections to the financi
 
 ```r
 opioids_joined %>% 
-    filter(OpioidRate < 2e4) %>%
-    group_by(GEOID, Population = estimate) %>% 
-    summarise(OpioidRate = median(OpioidRate)) %>%
-    inner_join(household_income %>%
-                   as.data.frame() %>%
-                   select(-geometry, -variable) %>%
-                   rename(Income = estimate)) %>%
-    ggplot(aes(Income, OpioidRate, size = Population)) +
-    geom_point(alpha = 0.7) +
-    geom_smooth(method = "lm", show.legend = FALSE) +
-    scale_x_continuous(labels = scales::dollar_format()) +
-    scale_y_continuous(labels = scales::comma_format()) +
-    labs(x = "Median household income", 
-         y = "Median monthly prescribed pills per 1k population",
-         title = "Income and controlled substance prescriptions",
-         subtitle = "There is no clear relationship between income and prescriptions")
+  filter(OpioidRate < 2e4) %>%
+  group_by(GEOID, Population = estimate) %>% 
+  summarise(OpioidRate = median(OpioidRate)) %>%
+  inner_join(household_income %>%
+               as.data.frame() %>%
+               select(-geometry, -variable) %>%
+               rename(Income = estimate)) %>%
+  ggplot(aes(Income, OpioidRate, size = Population)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", show.legend = FALSE) +
+  scale_x_continuous(labels = scales::dollar_format()) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(x = "Median household income", 
+       y = "Median monthly prescribed pills per 1k population",
+       title = "Income and controlled substance prescriptions",
+       subtitle = "There is no clear relationship between income and prescriptions")
 ```
 
-![Income and controlled substance prescriptions by county](figure/unnamed-chunk-6-1.png)
+![Income and controlled substance prescriptions by county](figure/unnamed-chunk-5-1.png)
 
 
 Not really. There is no strong relationship here apparent visually, and this is confirmed by modeling (no significant linear relationship). We *can* notice that all the extremely populous counties are low in the plot, with lower controlled substance rates compared to counties of similar income.
@@ -561,18 +623,18 @@ texas_race
 
 ```
 ## # A tibble: 1,016 x 5
-##    GEOID NAME             variable  value summary_value
-##    <chr> <chr>            <chr>     <dbl>         <dbl>
-##  1 48001 Anderson County  P0050003 35792.        58458.
-##  2 48003 Andrews County   P0050003  7083.        14786.
-##  3 48005 Angelina County  P0050003 54889.        86771.
-##  4 48007 Aransas County   P0050003 16350.        23158.
-##  5 48009 Archer County    P0050003  8182.         9054.
-##  6 48011 Armstrong County P0050003  1725.         1901.
-##  7 48013 Atascosa County  P0050003 16295.        44911.
-##  8 48015 Austin County    P0050003 18657.        28417.
-##  9 48017 Bailey County    P0050003  2745.         7165.
-## 10 48019 Bandera County   P0050003 16576.        20485.
+##    GEOID NAME             variable value summary_value
+##    <chr> <chr>            <chr>    <dbl>         <dbl>
+##  1 48001 Anderson County  P0050003 35792         58458
+##  2 48003 Andrews County   P0050003  7083         14786
+##  3 48005 Angelina County  P0050003 54889         86771
+##  4 48007 Aransas County   P0050003 16350         23158
+##  5 48009 Archer County    P0050003  8182          9054
+##  6 48011 Armstrong County P0050003  1725          1901
+##  7 48013 Atascosa County  P0050003 16295         44911
+##  8 48015 Austin County    P0050003 18657         28417
+##  9 48017 Bailey County    P0050003  2745          7165
+## 10 48019 Bandera County   P0050003 16576         20485
 ## # ... with 1,006 more rows
 ```
 
@@ -580,260 +642,214 @@ texas_race
 
 ```r
 race_joined <- texas_race %>%
-    mutate(PercentPopulation = value / summary_value,
-           variable = fct_recode(variable,
-                                 White = "P0050003",
-                                 Black = "P0050004",
-                                 Asian = "P0050006",
-                                 Hispanic = "P0040003")) %>%
-    inner_join(opioids_joined %>%
-                   filter(OpioidRate < 2e4) %>%
-                   group_by(GEOID) %>% 
-                   summarise(OpioidRate = median(OpioidRate)))
+  mutate(PercentPopulation = value / summary_value,
+         variable = fct_recode(variable,
+                               White = "P0050003",
+                               Black = "P0050004",
+                               Asian = "P0050006",
+                               Hispanic = "P0040003")) %>%
+  inner_join(opioids_joined %>%
+               #filter(OpioidRate < 2e4) %>%
+               group_by(GEOID, Date) %>% 
+               summarise(OpioidRate = median(OpioidRate)))
 
 race_joined %>%
-    rename(Population = summary_value) %>%
-    ggplot(aes(PercentPopulation, OpioidRate, 
-               size = Population, color = variable)) +
-    geom_point(alpha = 0.4) +
-    #geom_smooth(method = "lm", lty = 2, se = FALSE) +
-    facet_wrap(~variable) +
-    #theme(legend.position="none") +
-    scale_x_continuous(labels = scales::percent_format()) +
-    scale_y_continuous(labels = scales::comma_format()) +
-    scale_color_discrete(guide = FALSE) +
-    labs(x = "% of county population in that racial/ethnic group",
-         y = "Median monthly pills prescribed per 1k population",
-         title = "Race and controlled substance prescriptions",
-         subtitle = "The more white a county is, the higher the median monthly pills prescribed there",
-         size = "County\npopulation")
+  group_by(NAME, variable, GEOID) %>%
+  summarise(Population = median(summary_value),
+            OpioidRate = median(OpioidRate),
+            PercentPopulation = median(PercentPopulation)) %>%
+  ggplot(aes(PercentPopulation, OpioidRate, 
+             size = Population, color = variable)) +
+  geom_point(alpha = 0.4) +
+  #geom_smooth(method = "lm", lty = 2) +
+  facet_wrap(~variable) +
+  #theme(legend.position="none") +
+  scale_x_continuous(labels = scales::percent_format()) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  scale_color_discrete(guide = FALSE) +
+  labs(x = "% of county population in that racial/ethnic group",
+       y = "Median monthly pills prescribed per 1k population",
+       title = "Race and controlled substance prescriptions",
+       subtitle = "The more white a county is, the higher the median monthly pills prescribed there",
+       size = "County\npopulation")
 ```
 
-![Race and controlled substance prescriptions by county](figure/unnamed-chunk-7-1.png)
+![Race and controlled substance prescriptions by county](figure/unnamed-chunk-6-1.png)
 
-The more white a county is, the higher the rate of controlled substance prescription there. The more Hispanic a county is, the lower the rate of controlled substance prescription there. Remember that we did not see an effect with income, though.
+The more white a county is, the higher the rate of controlled substance prescription there. The more Hispanic a county is, the lower the rate of controlled substance prescription there. Effects with Black and Asian race are not clear in Texas. Remember that we did not see an effect with income, though.
 
-We can build a model to predict the monthly prescriptions with both race and income and see what has an effect when you control for both. Using the simple exploratory model below, it looks like it may be an interaction of race and income, i.e., poorer counties with large white populations have high rates of controlled substance use.
+We can build a model to predict the monthly prescriptions with both race, income, date (2017 and later vs. before 2017), and total population to see what has a significant effect when we control for all of these. Using the simple explanatory model below, we find that
+
+- poorer counties have higher rates,
+- counties with larger white population have higher rates,
+- the rates of controlled substance prescription was higher in the past, and
+- the prescription rate is higher in more populous counties.
+
+We also see from this table that when controlling for county population, the effects from low income and white population are more dramatic.
 
 
 
 ```r
-model_opioids <- race_joined %>%
-    select(GEOID, OpioidRate, TotalPop = summary_value,
-           variable, PercentPopulation) %>%
-    spread(variable, PercentPopulation) %>%
-    left_join(household_income %>% 
-                  select(GEOID, Income = estimate)) %>%
-    select(-geometry, -GEOID) %>%
-    lm(OpioidRate ~ Income * White, data = .)
+library(huxtable)
 
-summary(model_opioids)
+opioids <- race_joined %>%
+  select(GEOID, OpioidRate, TotalPop = summary_value,
+         variable, PercentPopulation, Date) %>%
+  spread(variable, PercentPopulation) %>%
+  left_join(household_income %>% 
+              select(GEOID, Income = estimate)) %>%
+  select(-geometry, -GEOID) %>%
+  mutate(Income = Income / 1e5,
+         OpioidRate = OpioidRate / 1e3, 
+         Date = factor(Date, levels = c("Before 2017", "2017 and later")),
+         Date = fct_recode(Date, ` 2017 and later` = "2017 and later"))
+
+lm1 <- lm(OpioidRate ~ Income + White, data = opioids)
+lm2 <- lm(OpioidRate ~ Income + White + Date, data = opioids)
+lm3 <- lm(OpioidRate ~ Income + White + Date + log(TotalPop), data = opioids)
+
+huxreg(lm1, lm2, lm3)
 ```
 
-```
-## 
-## Call:
-## lm(formula = OpioidRate ~ Income * White, data = .)
-## 
-## Residuals:
-##     Min      1Q  Median      3Q     Max 
-## -5973.7 -1021.6    24.8  1163.2  5165.5 
-## 
-## Coefficients:
-##                Estimate Std. Error t value Pr(>|t|)    
-## (Intercept)   4.236e+03  1.332e+03   3.181  0.00166 ** 
-## Income        2.863e-04  3.087e-02   0.009  0.99261    
-## White         1.300e+04  2.187e+03   5.946 9.24e-09 ***
-## Income:White -9.692e-02  4.918e-02  -1.971  0.04985 *  
-## ---
-## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-## 
-## Residual standard error: 1847 on 249 degrees of freedom
-## Multiple R-squared:  0.4959,	Adjusted R-squared:  0.4899 
-## F-statistic: 81.66 on 3 and 249 DF,  p-value: < 2.2e-16
-```
+<!--html_preserve--><table class="huxtable" style="border-collapse: collapse; margin-bottom: 2em; margin-top: 2em; width: 50%; margin-left: auto; margin-right: auto;">
+<col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><tr>
+  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
+  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1)</td>
+  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(2)</td>
+  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(3)</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(Intercept)</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">5.705 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">6.554 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">3.418 ***</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.547)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.528)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.786)&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">Income</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.531 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.531 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-5.222 ***</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.059)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.001)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.027)&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">White</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.239 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.239 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.941 ***</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.564)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.533)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.536)&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">Date 2017 and later</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.698 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.698 ***</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.217)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.212)&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">log(TotalPop)</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.358 ***</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.068)&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">N</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">508&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">508&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">508&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">R2</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.246&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.328&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.363&nbsp;&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">logLik</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1202.723&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1173.664&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1159.978&nbsp;&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">AIC</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2413.445&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2357.329&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2331.957&nbsp;&nbsp;&nbsp;&nbsp;</td>
+</tr>
+<tr>
+  <td  colspan="4" style="vertical-align: top; text-align: left; white-space: normal; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "> *** p &lt; 0.001;  ** p &lt; 0.01;  * p &lt; 0.05.</td>
+</tr>
+</table>
+<!--/html_preserve-->
 
-Including total population in this model does not make it a better model; total population is not a significant predictor and it does not improve the model interms of $R^2$ or residuals. Using the proportion of population that is Hispanic gives a model that is about as good; these are basically interchangeable but opposite in effect.
 
-We can explore the interaction between income and ethnicity visually. 
+Model metrics such as adjusted $R^2$ and log likelihood indicate that the model including income, percent white population, date, and total population on a log scale provides the most explanatory power for the opioid rate. Using the proportion of population that is Hispanic gives a model that is about as good; these are basically interchangeable but opposite in effect. Overall, the $R^2$ of these models is not extremely high (the best model has an adjusted $R^2% of 0.358) because these models are estimating population level characteristics and there is significant county-to-county variation that is not explained by these four predictors alone. The population level trends are statistically significant and with the effect sizes at the levels shown here.
+
+We can more directly explore the factors involved in this explanatory model (income, ethnicity, time) visually. 
 
 
 ```r
 race_joined %>%
-    filter(variable == "White") %>%
-    left_join(household_income %>% 
-                  as.data.frame() %>% 
-                  select(GEOID, Income = estimate)) %>%
-    filter(!is.na(Income)) %>%
-    mutate(Income = ifelse(Income <= median(Income, na.rm = TRUE), 
-                           "Low income", "High income"),
-           PercentPopulation = cut_width(PercentPopulation, 0.1)) %>%
-    group_by(PercentPopulation, Income) %>%
-    summarise(OpioidRate = median(OpioidRate)) %>%
-    complete(PercentPopulation, Income) %>%
-    ggplot(aes(PercentPopulation, OpioidRate, color = Income, group = Income)) +
-    geom_line(size = 1.5, alpha = 0.8) +
-    scale_y_continuous(labels = scales::comma_format(),
-                       limits = c(0, NA)) +
-    scale_x_discrete(labels = paste0(seq(0, 0.9, by = 0.1) * 100, "%")) +
-    labs(x = "% of county population that is white",
-         y = "Median monthly pills prescribed per 1k population",
-         color = NULL,
-         title = "White population, income, and controlled substance usage",
-         subtitle = "The more white a county is, the more low income is associated with more controlled substance usage")
+  filter(variable == "White") %>%
+  left_join(household_income %>% 
+              as.data.frame() %>% 
+              select(GEOID, Income = estimate)) %>%
+  filter(!is.na(Income)) %>%
+  mutate(Income = ifelse(Income <= median(Income, na.rm = TRUE), 
+                         "Low income", "High income"),
+         PercentPopulation = cut_width(PercentPopulation, 0.1)) %>%
+  group_by(PercentPopulation, Income, Date) %>%
+  summarise(OpioidRate = median(OpioidRate)) %>%
+  #complete(PercentPopulation, Income) %>%
+  mutate(Date = factor(Date, levels = c("Before 2017", "2017 and later"))) %>%
+  ggplot(aes(PercentPopulation, OpioidRate, color = Income, group = Income)) +
+  geom_line(size = 1.5, alpha = 0.8) +
+  geom_smooth(method = "lm", lty = 2, se = FALSE) +
+  scale_y_continuous(labels = scales::comma_format(),
+                     limits = c(0, NA)) +
+  scale_x_discrete(labels = paste0(seq(0, 0.9, by = 0.1) * 100, "%")) +
+  theme(legend.position = "top") +
+  facet_wrap(~Date) +
+  labs(x = "% of county population that is white",
+       y = "Median monthly pills prescribed per 1k population",
+       color = NULL,
+       title = "White population, income, and controlled substance usage",
+       subtitle = "Before 2017, the more white a county was, the more low income was associated with more controlled substance usage")
 ```
 
-![How white population, income, and controlled substance usage interact](figure/unnamed-chunk-9-1.png)
+![How white population, income, and controlled substance usage interact](figure/unnamed-chunk-8-1.png)
 
 
-This plot illustrates the interaction between white population percentage and income. The difference in controlled substance usage between lower and higher income counties (above and below the median in Texas) changes along the spectrum of counties' population that is white.
+This plot illustrates the relationship between white population percentage and income, and how that has changed with time. The difference in controlled substance usage between lower and higher income counties (above and below the median in Texas) changes along the spectrum of counties' population that is white.
 
-The first effect to notice here is that the more white a county is, the higher the rate of controlled substance prescriptions, for both groups of counties. The second thing, though, is to compare the slopes of the two lines. In higher income counties (above the median in Texas), the slope is shallower, but in lower income counties (below the median in Texas), the slope is steeper, i.e., the increase in prescription rate with white percentage is more dramatic. At the population level, controlled substance prescriptions are associated with how white a population is, and how low the income of that white population is.
+The first effect to notice here is that the more white a county is, the higher the rate of controlled substance prescriptions. This was true both before 2017 and for 2017 and later, and for both low-income and high-income groups of counties. The second thing, though, is to compare the slopes of the two lines. Before 2017, the slope was shallower for higher income counties (above the median in Texas), but in lower income counties (below the median in Texas), the slope was steeper, i.e., the increase in prescription rate with white percentage was more dramatic. For 2017 and later, there is no longer a noticeable difference between low-income and high-income counties, although the trend with white population percentage remains. 
 
-
-## Connecting to overdoses
-
-We can also use the data gathered on overdoses due to prescriptions controlled substances and other drugs to see what connections there are.
+What did we find? At the population level, controlled substance prescriptions are associated with how white a population is; before 2017, how low the income of that white population is had an impact and prescription rates were higher overall.
 
 
-```r
-path <- "UTSouthwestern170731Opioids.xls"
-
-overdoses_tidy <- path %>%
-    excel_sheets() %>%
-    set_names() %>%
-    map_df(~ read_excel(path = path, sheet = .x, skip = 9), .id = "sheet") %>%
-    gather(Date, Overdoses, `201301`:`201706`) %>%
-    mutate(Date = ymd(str_c(Date, "01")),
-           Overdoses = case_when(Overdoses == "*" ~ "Less than 5",
-                                 as.numeric(Overdoses) < 10 ~ "5 to 10",
-                                 as.numeric(Overdoses) > 10 ~ "More than 10",
-                                 is.na(Overdoses) ~ "Zero"),
-           Overdoses = factor(Overdoses, levels = c("Zero", "Less than 5",
-                                                    "5 to 10", "More than 10")))
-```
-
-
-
-
-```r
-overdoses_tidy %>%
-    inner_join(opioids_by_county %>%
-                   ungroup %>%
-                   mutate(County = toupper(County)), 
-               by = c("County", "Date")) %>%
-    filter(!is.na(Overdoses)) %>%
-    ggplot(aes(Overdoses, Pills, fill = sheet)) +
-    geom_boxplot(outlier.alpha = 0.5, alpha = 0.8,
-                 show.legend = FALSE, position = "dodge") +
-    facet_wrap(~sheet) +
-    scale_y_log10() +
-    labs(y = "Median monthly pills prescribed",
-         title = "Overdoses and prescriptions in Texas counties",
-         subtitle = "Counties with higher rates of prescriptions have higher rates of overdoses from all classes of drugs")
-```
-
-![Overdoses and prescriptions in Texas counties](figure/unnamed-chunk-11-1.png)
-
-Having higher rates of overdoses (more than 10 in a month) is rare but we do see that counties with higher numbers of overdoses in a month are the counties with higher numbers of controlled substance prescriptions. The counties with zero overdoses have a broad range of controlled substance prescription rates.
-
-We see that having higher prescriptions rates in a month is associated in raw number with higher overdoses in a month for *all* types of drugs. We want to know how controlled substance prescriptions affect this, to see if the increase is larger for, say, heroin and opioids than for unrelated drugs like cocaine, and how this changes when controlling for population (large vs. small counties).
-
-
-
-```r
-overdoses_joined <- overdoses_tidy %>% 
-    group_by(sheet, County, Overdoses) %>% 
-    summarize(Total = n()) %>% 
-    filter(!is.na(Overdoses)) %>% 
-    group_by(sheet, County) %>% 
-    filter(Total == last(Total)) %>%
-    ungroup %>%
-    left_join(opioids_joined %>%
-                  transmute(County = toupper(str_replace_all(County, " county, texas", "")),
-                            Population = estimate,
-                            Pills) %>%
-                  mutate(County = ifelse(County == "DEWITT",
-                                         "DE WITT", County)))
-
-model_results <- overdoses_joined %>%
-    mutate(Population = scale(Population),
-           Pills = scale(Pills)) %>%
-    nest(-sheet) %>%
-    mutate(models = map(data, ~ ordinal::clm(Overdoses ~ Population + Pills, data = .))) %>%
-    unnest(map(models, tidy)) %>%
-    filter(term %in% c("Population", "Pills")) %>%
-    arrange(sheet) %>%
-    select(-statistic, -p.value) 
-
-library(ggrepel)
-
-model_results %>%
-    select(-std.error) %>%
-    spread(term, estimate) %>%
-    left_join(model_results %>%
-                  select(-estimate) %>%
-                  spread(term, std.error),
-              by = "sheet",
-              suffix = c("", "Error")) %>%
-    ggplot(aes(Population, Pills, label = sheet)) +
-    geom_hline(size = 1.5, lty = 2, color = "gray50",
-               yintercept = 0, alpha = 0.5) +
-    geom_vline(size = 1.5, lty = 2, color = "gray50",
-               xintercept = 0, alpha = 0.5) +
-    geom_errorbar(aes(ymin = Pills - PillsError,
-                      ymax = Pills + PillsError),
-                  color = "gray80") +
-    geom_errorbarh(aes(xmin = Population - PopulationError,
-                       xmax = Population + PopulationError),
-                   color = "gray80") +
-    geom_text_repel(family = "IBMPlexSans-Medium") +
-    geom_point() +
-    labs(x = "Effect of increasing population on overdoses (scaled)",
-         y = "Effect of increasing monthly prescriptions on overdoses (scaled)",
-         title = "Overdoses, prescriptions, and population in Texas counties",
-         subtitle = "Methamphetamine and heroin overdoses are associated with higher controlled prescription rates")
-```
-
-![Overdoses, prescriptions, and population in Texas counties](figure/unnamed-chunk-12-1.png)
-
-Overdoses are rare overall so we are limited in how precisely we can measure how they depend on other quantities at a population level. When controlling for population, the effect size on overdoses from increasing monthly controlled substance prescriptions is significant for methamphetamines and heroin but not for any other category of overdoses, including opioids themselves. (Remember that the controlled substance prescriptions are dominated by opioids.) Prescription opioid and benzodiazepine overdoses increase with population, but we do not see evidence in this dataset that they are related to increasing prescriptions.
-
-Let's look at how the overdoses are distributed.
-
-
-```r
-overdoses_map <- opioids_joined %>%
-    select(County) %>%
-    left_join(overdoses_tidy %>%
-                  mutate(OverdosesNumber = case_when(Overdoses == "Zero" ~ 0,
-                                                     Overdoses == "Less than 5" ~ 3,
-                                                     Overdoses == "5 to 10" ~ 7,
-                                                     Overdoses == "More than 10" ~ 10)) %>%
-                  group_by(sheet, County) %>%
-                  summarise(Overdoses = mean(OverdosesNumber, na.rm = TRUE)) %>%
-                  ungroup %>%
-                  mutate(County = if_else(County == "DEWITT", "DE WITT", County),
-                         County = str_to_lower(County),
-                         County = str_c(County, " county, texas"))) %>%
-    complete(sheet, County, fill = list(Overdoses = 0)) %>%
-    filter(!is.na(sheet)) %>%
-    inner_join(opioids_joined %>% 
-                   select(County, GEOID, NAME, geometry))
-
-overdoses_map %>%
-    st_as_sf() %>%
-    ggplot(aes(fill = Overdoses, color = Overdoses)) + 
-    geom_sf() + 
-    coord_sf() + 
-    facet_wrap(~sheet, nrow = 1) +
-    scale_fill_viridis(labels = comma_format()) + 
-    scale_color_viridis(guide = FALSE) +
-    labs(fill = "Overdoses",
-         title = "Monthly mean overdoses in Texas counties",
-         subtitle = "Only heroin and methamphetamine exhibit evidence of increasing with controlled substance prescriptions, after controlling for population")
-```
-
-![Monthly mean overdoses in Texas counties](figure/unnamed-chunk-13-1.png)
-
-These maps show that, naturally, there are more overdoses where there are more people. When fitting a model that controls for both population *and* number of pills prescribed, we start to see the differences described above.
