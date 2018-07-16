@@ -27,6 +27,7 @@ Let's open up the dataset and start munging and preparing it.
 library(tidyverse)
 library(readxl)
 library(lubridate)
+library(googlesheets)
 
 path <- "CountyDrugPillQty_2017_07.xlsx"
 
@@ -37,25 +38,71 @@ opioids_raw <- path %>%
     mutate(Date = dmy(str_c("01-", sheet))) %>%
     select(-sheet) %>%
     rename(Name = `Generic Name`)
+
+new_opioids_sheet <- gs_title("TX CS Qty By Drug Name-County")
+
+new_opioids_raw <- new_opioids_sheet %>%
+    gs_read("TX CS RX By Generic Name-County",
+            col_types = "cnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+            skip = 4,
+            verbose = FALSE) %>%
+    rename(Name = `Date/Month Filter`)  %>% 
+    mutate(Date = case_when(str_detect(Name, 
+                                       "^[a-zA-Z]{3}-[0-9]{2}$") ~ Name,
+                            TRUE ~ NA_character_)) %>%
+    fill(Date, .direction = "down") %>%
+    select(-`Grand Total`) %>%
+    filter(Name != Date) %>%
+    mutate(Date = dmy(str_c("01-", Date))) %>%
+    select(Name, Date, everything())
 ```
 
+We have overlapping measurements for the same drugs and counties from February to June of 2017. How do these measurements compare to each other?
+
+```{r compare, dependson="opioids_raw", fig.width=8, fig.height=5}
+## comparing the counts for the overlapping time period
+
+compare <- opioids_raw %>%
+    filter(Date > "2017-01-01") %>%
+    gather(County, PillsOld, ANDERSON:ZAVALA) %>%
+    inner_join(new_opioids_raw %>% 
+                  gather(County, PillsNew, ANDERSON:ZAVALA)) %>%
+    mutate(PercentChange = abs(PillsOld - PillsNew) / PillsOld)
+
+compare %>%    
+    ggplot(aes(PillsOld, PillsNew, color = County)) +
+    geom_abline(color = "gray50", lty = 2, alpha = 0.8, size = 1.6) +
+    geom_point(alpha = 0.4, size = 1.7, show.legend = FALSE) +
+    labs(x = "Count from old data",
+         y = "Count from new data",
+         title = "How close are the prescription quantities in each dataset?",
+         subtitle = "Comparing the same drug in the same county")
+
+```
+
+Most measurements are close, and the median change is about 20%. The new data is modestly higher in prescription quantity.
 
 ```{r opioids_tidy, dependson="opioids_raw"}
-library(googlesheets)
-
 categories_sheet <- gs_title("Drug categories")
 drug_categories <- categories_sheet %>%
     gs_read("Sheet1", verbose = FALSE) %>%
-    rename(Name = `Generic Name`)
+    rename(Name = `Generic Name`) %>%
+  bind_rows(categories_sheet %>%
+              gs_read("Sheet2", verbose = FALSE) %>%
+              rename(Name = `Generic Name`)) %>%
+  filter(Schedule %in% c("II", "III", "IV", "V"))
 
 opioids_tidy <- opioids_raw %>%
     gather(County, Pills, ANDERSON:ZAVALA) %>%
+    bind_rows(new_opioids_raw %>% 
+                  gather(County, Pills, ANDERSON:ZAVALA)) %>%
     mutate(Pills = ifelse(Pills > 1e10, NA, Pills)) %>%
     replace_na(replace = list(Pills = 0)) %>%
     mutate(County = str_to_title(County)) %>%
     left_join(drug_categories, by = "Name") %>%
     select(County, Date, Name, Category, Schedule, Pills) %>%
-    filter(Name != "Unspecified")
+    filter(Name != "Unspecified",
+           !is.na(Schedule))
 
 opioids_tidy
 ```
