@@ -74,6 +74,22 @@ compare %>%
 
 ![plot of chunk compare](figure/compare-1.png)
 
+```r
+compare %>% 
+  filter(PercentChange != Inf,
+         PercentChange < 0.9,
+         PillsOld < 5e5) %>% 
+  summarise(PercentLessThan10 = mean(PercentChange < 0.15),
+            PercentChange = median(PercentChange))
+```
+
+```
+## # A tibble: 1 x 2
+##   PercentLessThan10 PercentChange
+##               <dbl>         <dbl>
+## 1             0.452         0.179
+```
+
 Most measurements are close, and the median change is about 20%. The new data is modestly higher in prescription quantity. When we have, it we'll use the new values.
 
 
@@ -205,7 +221,7 @@ opioids_tidy %>%
 
 ![Controlled substance prescriptions by schedule](figure/schedule-1.png)
 
-This looks pretty flat, but let's fit some models.
+Schedule IV drugs accounted for the most doses prescribed, with Schedule II close behind, and both look like they are decreasing in prescribing prevalence. Let's fit some models.
 
 
 ```r
@@ -235,7 +251,7 @@ time_models %>%
 |II       |Date |  -5392.202| 1790.4440| -3.0116564| 0.0048008|
 |IV       |Date | -11985.809| 3302.4011| -3.6294224| 0.0008983|
 
-These models are all asking the question, "What is the rate of change of doses prescribed with time?" The p-values are almost all high (all > 0.05), indicating that we aren't seeing increases or decreases for any schedule, just like we see in the plot. The overall numbers of pills prescribed per month is mostly flat.
+These models are all asking the question, "What is the rate of change of doses prescribed with time?" The p-values are almost all low (several < 0.005), indicating that we are seeing decreases for Schedule IV and II, just like we see in the plot, starting at the beginning of 2017.
 
 Now let's look at specific drug categories like opioid, stimulant, sedative, and so forth. What are the top 10?
 
@@ -246,12 +262,12 @@ opioids_tidy %>%
   mutate(Percent = percent(n / sum(n))) %>%
   top_n(10, n) %>%
   select(-n) %>%
-  kable(col.names = c("Schedule", "% of total pills over this time period"))
+  kable(col.names = c("Drug", "% of total pills over this time period"))
 ```
 
 
 
-|Schedule                    |% of total pills over this time period |
+|Drug                        |% of total pills over this time period |
 |:---------------------------|:--------------------------------------|
 |Opioid                      |55.9%                                  |
 |Benzodiazepine              |19.3%                                  |
@@ -277,7 +293,7 @@ time_models <- category_by_month %>%
   mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
   unnest(map(models, tidy)) %>%
   filter(term == "Date") %>%
-  mutate(p.value = p.adjust(p.value)) %>%
+  mutate(p.value = p.adjust(p.value, "bonferroni")) %>%
   arrange(desc(estimate))
 
 time_models %>%
@@ -288,7 +304,7 @@ time_models %>%
 
 |Category                    |term |      estimate|    std.error|   statistic|   p.value|
 |:---------------------------|:----|-------------:|------------:|-----------:|---------:|
-|Amphetamine                 |Date |  2348.2617099|  669.2684877|   3.5086991| 0.0113232|
+|Amphetamine                 |Date |  2348.2617099|  669.2684877|   3.5086991| 0.0213882|
 |Anticonvulsant              |Date |   628.7830872|   44.7212473|  14.0600525| 0.0000000|
 |Cannabinoid                 |Date |     3.4354408|    5.1333999|   0.6692330| 1.0000000|
 |Opioid antagonist           |Date |    -0.0450837|    0.0833197|  -0.5410924| 1.0000000|
@@ -298,15 +314,15 @@ time_models %>%
 |Steroid                     |Date |  -104.5924121|    9.6345567| -10.8559652| 0.0000000|
 |NMDA Antagonist             |Date |  -141.1792884| 1176.6079118|  -0.1199884| 1.0000000|
 |Serotonin Receptor Agonist  |Date |  -275.4392966|    7.9341568| -34.7156356| 0.0000000|
-|Hydroxybutyrate             |Date |  -457.6104921|   74.6518946|  -6.1299247| 0.0000057|
-|GABA receptor agonist       |Date | -1059.9940658|  160.3633234|  -6.6099532| 0.0000015|
-|Anabolic Steroid            |Date | -1234.9237030|  225.8359175|  -5.4682343| 0.0000388|
+|Hydroxybutyrate             |Date |  -457.6104921|   74.6518946|  -6.1299247| 0.0000089|
+|GABA receptor agonist       |Date | -1059.9940658|  160.3633234|  -6.6099532| 0.0000021|
+|Anabolic Steroid            |Date | -1234.9237030|  225.8359175|  -5.4682343| 0.0000660|
 |Sedative                    |Date | -1315.2821309|  126.3179537| -10.4124718| 0.0000000|
 |Barbiturate                 |Date | -1706.0414557|  104.4197493| -16.3383025| 0.0000000|
 |Opioid                      |Date | -5550.5513927| 4076.7680269|  -1.3615078| 1.0000000|
-|Benzodiazepine              |Date | -6085.1176107| 2648.4658639|  -2.2976009| 0.2214334|
+|Benzodiazepine              |Date | -6085.1176107| 2648.4658639|  -2.2976009| 0.4705459|
 
-Many of these p-values are high, indicating that they are not being prescribed more or less, but at mostly the same rate over this time period.
+Many of the p-values are high, indicating that they are not being prescribed more or less, but at mostly the same rate over this time period.
 
 Which drugs are being prescribed *more* or *less*? These are the drugs that are show evidence of growing or shrinking over this time period, at the p < 0.05 level.
 
@@ -333,7 +349,7 @@ opioids_tidy %>%
 
 ## Where is controlled substance use changing?
 
-Let's use linear modeling to find counties where controlled substance use is changing.
+Let's use linear modeling to find counties where controlled substance use is changing. We would need to find the rate of population growth for these countries to make strong statements about what these mean.
 
 
 ```r
@@ -518,7 +534,7 @@ opioids_joined <- opioids_by_county %>%
          County = ifelse(County == "de witt county, texas",
                          "dewitt county, texas", County)) %>%
   inner_join(population %>% mutate(County = str_to_lower(NAME)), by = "County") %>%
-  mutate(OpioidRate = Pills / estimate * 1e3)
+  mutate(OpioidRate = Pills / estimate)
 ```
 
 
@@ -531,23 +547,23 @@ opioids_joined %>%
   top_n(10, estimate) %>%
   arrange(desc(estimate)) %>%
   select(NAME, OpioidRate) %>%
-  kable(col.names = c("County", "Median monthly pills per 1k population"))
+  kable(col.names = c("County", "Median monthly pills per capita"), digits = 2)
 ```
 
 
 
-|County                  | Median monthly pills per 1k population|
-|:-----------------------|--------------------------------------:|
-|Harris County, Texas    |                               5794.668|
-|Dallas County, Texas    |                               6300.645|
-|Tarrant County, Texas   |                               7879.951|
-|Bexar County, Texas     |                               7546.366|
-|Travis County, Texas    |                               6558.798|
-|Collin County, Texas    |                               7235.293|
-|El Paso County, Texas   |                               4431.817|
-|Hidalgo County, Texas   |                               3354.772|
-|Denton County, Texas    |                               7845.124|
-|Fort Bend County, Texas |                               5382.699|
+|County                  | Median monthly pills per capita|
+|:-----------------------|-------------------------------:|
+|Harris County, Texas    |                            5.79|
+|Dallas County, Texas    |                            6.30|
+|Tarrant County, Texas   |                            7.88|
+|Bexar County, Texas     |                            7.55|
+|Travis County, Texas    |                            6.56|
+|Collin County, Texas    |                            7.24|
+|El Paso County, Texas   |                            4.43|
+|Hidalgo County, Texas   |                            3.35|
+|Denton County, Texas    |                            7.85|
+|Fort Bend County, Texas |                            5.38|
 
 These rates vary a lot; the controlled substance prescription rate in Tarrant County is almost 40% higher than the rate in Harris County.
 
@@ -559,7 +575,7 @@ library(sf)
 library(viridis)
 
 opioids_map <- opioids_joined %>%
-  mutate(OpioidRate = ifelse(OpioidRate > 1.6e4, 1.6e4, OpioidRate))
+  mutate(OpioidRate = ifelse(OpioidRate > 16, 16, OpioidRate))
 
 opioids_map %>%
   mutate(Date = factor(Date, levels = c("Before 2017", "2017 and later"))) %>%
@@ -570,7 +586,7 @@ opioids_map %>%
   facet_wrap(~Date) +
   scale_fill_viridis(labels = comma_format()) + 
   scale_color_viridis(guide = FALSE) +
-  labs(fill = "Monthly pills\nper 1k population")
+  labs(fill = "Monthly pills\nper capita")
 ```
 
 ![Mapping controlled substance prescriptions across Texas](figure/make_map-1.png)
@@ -584,7 +600,7 @@ Is there a direct relationship with income? Do we see connections to the financi
 
 ```r
 opioids_joined %>% 
-  filter(OpioidRate < 2e4) %>%
+  filter(OpioidRate < 20) %>%
   group_by(GEOID, Population = estimate) %>% 
   summarise(OpioidRate = median(OpioidRate)) %>%
   inner_join(household_income %>%
@@ -597,7 +613,7 @@ opioids_joined %>%
   scale_x_continuous(labels = scales::dollar_format()) +
   scale_y_continuous(labels = scales::comma_format()) +
   labs(x = "Median household income", 
-       y = "Median monthly prescribed pills per 1k population",
+       y = "Median monthly prescribed pills per capita",
        title = "Income and controlled substance prescriptions",
        subtitle = "There is no clear relationship between income and prescriptions")
 ```
@@ -649,7 +665,7 @@ race_joined <- texas_race %>%
                                Asian = "P0050006",
                                Hispanic = "P0040003")) %>%
   inner_join(opioids_joined %>%
-               #filter(OpioidRate < 2e4) %>%
+               filter(OpioidRate < 20) %>%
                group_by(GEOID, Date) %>% 
                summarise(OpioidRate = median(OpioidRate)))
 
@@ -668,7 +684,7 @@ race_joined %>%
   scale_y_continuous(labels = scales::comma_format()) +
   scale_color_discrete(guide = FALSE) +
   labs(x = "% of county population in that racial/ethnic group",
-       y = "Median monthly pills prescribed per 1k population",
+       y = "Median monthly pills prescribed per capita",
        title = "Race and controlled substance prescriptions",
        subtitle = "The more white a county is, the higher the median monthly pills prescribed there",
        size = "County\npopulation")
@@ -700,116 +716,142 @@ opioids <- race_joined %>%
               select(GEOID, Income = estimate)) %>%
   select(-geometry, -GEOID) %>%
   mutate(Income = Income / 1e5,
-         OpioidRate = OpioidRate / 1e3, 
+         OpioidRate = OpioidRate, 
          Date = factor(Date, levels = c("Before 2017", "2017 and later")),
          Date = fct_recode(Date, ` 2017 and later` = "2017 and later"))
 
 lm1 <- lm(OpioidRate ~ Income + White, data = opioids)
 lm2 <- lm(OpioidRate ~ Income + White + Date, data = opioids)
-lm3 <- lm(OpioidRate ~ Income + White + Date + log(TotalPop), data = opioids)
+lm3 <- lm(OpioidRate ~ Income + Date + log(TotalPop), data = opioids)
+lm4 <- lm(OpioidRate ~ Income + White + Date + log(TotalPop), data = opioids)
 
-huxreg(lm1, lm2, lm3)
+huxreg(lm1, lm2, lm3, lm4)
 ```
 
 <!--html_preserve--><table class="huxtable" style="border-collapse: collapse; margin-bottom: 2em; margin-top: 2em; width: 50%; margin-left: auto; margin-right: auto;">
-<col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><tr>
+<col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><tr>
   <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
   <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1)</td>
   <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(2)</td>
   <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(3)</td>
+  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(4)</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(Intercept)</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">5.705 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">6.554 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">3.418 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">5.674 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">6.503 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">8.017 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">3.244 ***</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.547)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.528)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.786)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.536)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.518)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.837)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.769)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">Income</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.531 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.531 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-5.222 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.285 **&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.302 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-0.439&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-5.046 ***</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.059)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.001)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.027)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.040)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.984)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.145)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.005)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">White</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.239 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.239 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.941 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.053 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.066 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.786 ***</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.564)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.533)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.536)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.554)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.524)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.525)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">Date 2017 and later</td>
   <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.698 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.698 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.655 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.644 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.653 ***</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
   <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.217)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.212)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.213)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.248)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.207)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">log(TotalPop)</td>
   <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
   <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.358 ***</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.131&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.372 ***</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
   <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
   <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.068)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.077)&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.066)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">N</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">508&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">508&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">508&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">R2</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.246&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.328&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.363&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.243&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.324&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.085&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.364&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">logLik</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1202.723&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1173.664&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1159.978&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1190.314&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1161.676&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1238.385&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1146.313&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
   <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">AIC</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2413.445&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2357.329&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2331.957&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2388.629&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2333.352&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2486.769&nbsp;&nbsp;&nbsp;&nbsp;</td>
+  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2304.626&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  colspan="4" style="vertical-align: top; text-align: left; white-space: normal; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "> *** p &lt; 0.001;  ** p &lt; 0.01;  * p &lt; 0.05.</td>
+  <td  colspan="5" style="vertical-align: top; text-align: left; white-space: normal; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "> *** p &lt; 0.001;  ** p &lt; 0.01;  * p &lt; 0.05.</td>
 </tr>
 </table>
 <!--/html_preserve-->
 
 
-Model metrics such as adjusted $R^2$ and log likelihood indicate that the model including income, percent white population, date, and total population on a log scale provides the most explanatory power for the opioid rate. Using the proportion of population that is Hispanic gives a model that is about as good; these are basically interchangeable but opposite in effect. Overall, the $R^2$ of these models is not extremely high (the best model has an adjusted $R^2% of 0.358) because these models are estimating population level characteristics and there is significant county-to-county variation that is not explained by these four predictors alone. The population level trends are statistically significant and with the effect sizes at the levels shown here.
+
+```r
+path <- "~/Dropbox/Opioid Utilization/Data/regression.docx"
+ft <- huxreg(lm1, lm2, lm3, lm4) %>% as_flextable()
+my_doc <- officer::read_docx(path)
+my_doc <- flextable::body_add_flextable(my_doc, ft)
+print(my_doc, target = path)
+```
+
+
+Model metrics such as adjusted $R^2$ and log likelihood indicate that the model including income, percent white population, date, and total population on a log scale provides the most explanatory power for the opioid rate. Using the proportion of population that is Hispanic gives a model that is about as good; these are basically interchangeable but opposite in effect. Overall, the $R^2$ of these models is not extremely high (the best model has an adjusted $R^2$ of 0.359) because these models are estimating population level characteristics and there is significant county-to-county variation that is not explained by these four predictors alone. The population level trends are statistically significant and with the effect sizes at the levels shown here.
 
 We can more directly explore the factors involved in this explanatory model (income, ethnicity, time) visually. 
 
@@ -843,12 +885,12 @@ race_joined %>%
        subtitle = "Before 2017, the more white a county was, the more low income was associated with more controlled substance usage")
 ```
 
-![How white population, income, and controlled substance usage interact](figure/unnamed-chunk-8-1.png)
+![How white population, income, and controlled substance usage are related](figure/income_race-1.png)
 
 
 This plot illustrates the relationship between white population percentage and income, and how that has changed with time. The difference in controlled substance usage between lower and higher income counties (above and below the median in Texas) changes along the spectrum of counties' population that is white.
 
-The first effect to notice here is that the more white a county is, the higher the rate of controlled substance prescriptions. This was true both before 2017 and for 2017 and later, and for both low-income and high-income groups of counties. The second thing, though, is to compare the slopes of the two lines. Before 2017, the slope was shallower for higher income counties (above the median in Texas), but in lower income counties (below the median in Texas), the slope was steeper, i.e., the increase in prescription rate with white percentage was more dramatic. For 2017 and later, there is no longer a noticeable difference between low-income and high-income counties, although the trend with white population percentage remains. 
+The first effect to notice here is that the more white a county is, the higher the rate of controlled substance prescriptions. This was true both before 2017 and for 2017 and later, and for both low-income and high-income groups of counties. The second effect, though, is to compare the slopes of the two lines. Before 2017, the slope was shallower for higher income counties (above the median in Texas), but in lower income counties (below the median in Texas), the slope was steeper, i.e., the increase in prescription rate with white percentage was more dramatic. For 2017 and later, there is no longer a noticeable difference between low-income and high-income counties, although the trend with white population percentage remains. 
 
 What did we find? At the population level, controlled substance prescriptions are associated with how white a population is; before 2017, how low the income of that white population is had an impact and prescription rates were higher overall.
 

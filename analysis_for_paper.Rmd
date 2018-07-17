@@ -13,10 +13,12 @@ knitr::opts_chunk$set(cache = TRUE,
                       warning = FALSE, message = FALSE, 
                       dpi = 180)
 options(width=80, tigris_use_cache = TRUE)
-library(ggplot2)
+library(tidyverse)
+library(broom)
 library(silgelib)
 library(scales)
 theme_set(theme_plex())
+#theme_set(theme_minimal())
 ```
 
 
@@ -78,6 +80,13 @@ compare %>%
        y = "Count from new data",
        title = "How close are the prescription quantities in each dataset?",
        subtitle = "Comparing the same drug in the same county")
+
+compare %>% 
+  filter(PercentChange != Inf,
+         PercentChange < 0.9,
+         PillsOld < 5e5) %>% 
+  summarise(PercentLessThan10 = mean(PercentChange < 0.15),
+            PercentChange = median(PercentChange))
 
 ```
 
@@ -176,7 +185,7 @@ opioids_tidy %>%
        subtitle = "Schedule IV drugs account for the most doses, with Schedule II close behind")
 ```
 
-This looks pretty flat, but let's fit some models.
+Schedule IV drugs accounted for the most doses prescribed, with Schedule II close behind, and both look like they are decreasing in prescribing prevalence. Let's fit some models.
 
 ```{r schedule_models, dependson="opioids_tidy"}
 library(broom)
@@ -196,7 +205,7 @@ time_models %>%
   kable()
 ```
 
-These models are all asking the question, "What is the rate of change of doses prescribed with time?" The p-values are almost all high (all > 0.05), indicating that we aren't seeing increases or decreases for any schedule, just like we see in the plot. The overall numbers of pills prescribed per month is mostly flat.
+These models are all asking the question, "What is the rate of change of doses prescribed with time?" The p-values are almost all low (several < 0.005), indicating that we are seeing decreases for Schedule IV and II, just like we see in the plot, starting at the beginning of 2017.
 
 Now let's look at specific drug categories like opioid, stimulant, sedative, and so forth. What are the top 10?
 
@@ -206,7 +215,7 @@ opioids_tidy %>%
   mutate(Percent = percent(n / sum(n))) %>%
   top_n(10, n) %>%
   select(-n) %>%
-  kable(col.names = c("Schedule", "% of total pills over this time period"))
+  kable(col.names = c("Drug", "% of total pills over this time period"))
 
 ```
 
@@ -222,14 +231,14 @@ time_models <- category_by_month %>%
   mutate(models = map(data, ~ lm(Pills ~ Date, .))) %>%
   unnest(map(models, tidy)) %>%
   filter(term == "Date") %>%
-  mutate(p.value = p.adjust(p.value)) %>%
+  mutate(p.value = p.adjust(p.value, "bonferroni")) %>%
   arrange(desc(estimate))
 
 time_models %>%
   kable()
 ```
 
-Many of these p-values are high, indicating that they are not being prescribed more or less, but at mostly the same rate over this time period.
+Many of the p-values are high, indicating that they are not being prescribed more or less, but at mostly the same rate over this time period.
 
 Which drugs are being prescribed *more* or *less*? These are the drugs that are show evidence of growing or shrinking over this time period, at the p < 0.05 level.
 
@@ -253,7 +262,7 @@ opioids_tidy %>%
 
 ## Where is controlled substance use changing?
 
-Let's use linear modeling to find counties where controlled substance use is changing.
+Let's use linear modeling to find counties where controlled substance use is changing. We would need to find the rate of population growth for these countries to make strong statements about what these mean.
 
 ```{r county_models, dependson="opioids_tidy"}
 library(broom)
@@ -346,7 +355,7 @@ opioids_joined <- opioids_by_county %>%
          County = ifelse(County == "de witt county, texas",
                          "dewitt county, texas", County)) %>%
   inner_join(population %>% mutate(County = str_to_lower(NAME)), by = "County") %>%
-  mutate(OpioidRate = Pills / estimate * 1e3)
+  mutate(OpioidRate = Pills / estimate)
 
 ```
 
@@ -359,7 +368,7 @@ opioids_joined %>%
   top_n(10, estimate) %>%
   arrange(desc(estimate)) %>%
   select(NAME, OpioidRate) %>%
-  kable(col.names = c("County", "Median monthly pills per 1k population"))
+  kable(col.names = c("County", "Median monthly pills per capita"), digits = 2)
 ```
 
 These rates vary a lot; the controlled substance prescription rate in Tarrant County is almost 40% higher than the rate in Harris County.
@@ -371,7 +380,7 @@ library(sf)
 library(viridis)
 
 opioids_map <- opioids_joined %>%
-  mutate(OpioidRate = ifelse(OpioidRate > 1.6e4, 1.6e4, OpioidRate))
+  mutate(OpioidRate = ifelse(OpioidRate > 16, 16, OpioidRate))
 
 opioids_map %>%
   mutate(Date = factor(Date, levels = c("Before 2017", "2017 and later"))) %>%
@@ -382,7 +391,7 @@ opioids_map %>%
   facet_wrap(~Date) +
   scale_fill_viridis(labels = comma_format()) + 
   scale_color_viridis(guide = FALSE) +
-  labs(fill = "Monthly pills\nper 1k population")
+  labs(fill = "Monthly pills\nper capita")
 
 ```
 
@@ -394,7 +403,7 @@ Is there a direct relationship with income? Do we see connections to the financi
 
 ```{r, fig.width=7, fig.height=5, fig.cap="Income and controlled substance prescriptions by county"}
 opioids_joined %>% 
-  filter(OpioidRate < 2e4) %>%
+  filter(OpioidRate < 20) %>%
   group_by(GEOID, Population = estimate) %>% 
   summarise(OpioidRate = median(OpioidRate)) %>%
   inner_join(household_income %>%
@@ -407,7 +416,7 @@ opioids_joined %>%
   scale_x_continuous(labels = scales::dollar_format()) +
   scale_y_continuous(labels = scales::comma_format()) +
   labs(x = "Median household income", 
-       y = "Median monthly prescribed pills per 1k population",
+       y = "Median monthly prescribed pills per capita",
        title = "Income and controlled substance prescriptions",
        subtitle = "There is no clear relationship between income and prescriptions")
 ```
@@ -438,7 +447,7 @@ race_joined <- texas_race %>%
                                Asian = "P0050006",
                                Hispanic = "P0040003")) %>%
   inner_join(opioids_joined %>%
-               #filter(OpioidRate < 2e4) %>%
+               filter(OpioidRate < 20) %>%
                group_by(GEOID, Date) %>% 
                summarise(OpioidRate = median(OpioidRate)))
 
@@ -457,7 +466,7 @@ race_joined %>%
   scale_y_continuous(labels = scales::comma_format()) +
   scale_color_discrete(guide = FALSE) +
   labs(x = "% of county population in that racial/ethnic group",
-       y = "Median monthly pills prescribed per 1k population",
+       y = "Median monthly pills prescribed per capita",
        title = "Race and controlled substance prescriptions",
        subtitle = "The more white a county is, the higher the median monthly pills prescribed there",
        size = "County\npopulation")
@@ -486,23 +495,33 @@ opioids <- race_joined %>%
               select(GEOID, Income = estimate)) %>%
   select(-geometry, -GEOID) %>%
   mutate(Income = Income / 1e5,
-         OpioidRate = OpioidRate / 1e3, 
+         OpioidRate = OpioidRate, 
          Date = factor(Date, levels = c("Before 2017", "2017 and later")),
          Date = fct_recode(Date, ` 2017 and later` = "2017 and later"))
 
 lm1 <- lm(OpioidRate ~ Income + White, data = opioids)
 lm2 <- lm(OpioidRate ~ Income + White + Date, data = opioids)
-lm3 <- lm(OpioidRate ~ Income + White + Date + log(TotalPop), data = opioids)
+lm3 <- lm(OpioidRate ~ Income + Date + log(TotalPop), data = opioids)
+lm4 <- lm(OpioidRate ~ Income + White + Date + log(TotalPop), data = opioids)
 
-huxreg(lm1, lm2, lm3)
+huxreg(lm1, lm2, lm3, lm4)
 ```
 
 
-Model metrics such as adjusted $R^2$ and log likelihood indicate that the model including income, percent white population, date, and total population on a log scale provides the most explanatory power for the opioid rate. Using the proportion of population that is Hispanic gives a model that is about as good; these are basically interchangeable but opposite in effect. Overall, the $R^2$ of these models is not extremely high (the best model has an adjusted $R^2% of `r glance(lm3) %>% pull(adj.r.squared) %>% round(3)`) because these models are estimating population level characteristics and there is significant county-to-county variation that is not explained by these four predictors alone. The population level trends are statistically significant and with the effect sizes at the levels shown here.
+```{r eval=FALSE}
+path <- "~/Dropbox/Opioid Utilization/Data/regression.docx"
+ft <- huxreg(lm1, lm2, lm3, lm4) %>% as_flextable()
+my_doc <- officer::read_docx(path)
+my_doc <- flextable::body_add_flextable(my_doc, ft)
+print(my_doc, target = path)
+```
+
+
+Model metrics such as adjusted $R^2$ and log likelihood indicate that the model including income, percent white population, date, and total population on a log scale provides the most explanatory power for the opioid rate. Using the proportion of population that is Hispanic gives a model that is about as good; these are basically interchangeable but opposite in effect. Overall, the $R^2$ of these models is not extremely high (the best model has an adjusted $R^2$ of `r glance(lm4) %>% pull(adj.r.squared) %>% round(3)`) because these models are estimating population level characteristics and there is significant county-to-county variation that is not explained by these four predictors alone. The population level trends are statistically significant and with the effect sizes at the levels shown here.
 
 We can more directly explore the factors involved in this explanatory model (income, ethnicity, time) visually. 
 
-```{r, fig.width=10, fig.height=8, fig.cap="How white population, income, and controlled substance usage interact"}
+```{r income_race, fig.width=10.5, fig.height=6, fig.cap="How white population, income, and controlled substance usage are related"}
 race_joined %>%
   filter(variable == "White") %>%
   left_join(household_income %>% 
@@ -534,7 +553,7 @@ race_joined %>%
 
 This plot illustrates the relationship between white population percentage and income, and how that has changed with time. The difference in controlled substance usage between lower and higher income counties (above and below the median in Texas) changes along the spectrum of counties' population that is white.
 
-The first effect to notice here is that the more white a county is, the higher the rate of controlled substance prescriptions. This was true both before 2017 and for 2017 and later, and for both low-income and high-income groups of counties. The second thing, though, is to compare the slopes of the two lines. Before 2017, the slope was shallower for higher income counties (above the median in Texas), but in lower income counties (below the median in Texas), the slope was steeper, i.e., the increase in prescription rate with white percentage was more dramatic. For 2017 and later, there is no longer a noticeable difference between low-income and high-income counties, although the trend with white population percentage remains. 
+The first effect to notice here is that the more white a county is, the higher the rate of controlled substance prescriptions. This was true both before 2017 and for 2017 and later, and for both low-income and high-income groups of counties. The second effect, though, is to compare the slopes of the two lines. Before 2017, the slope was shallower for higher income counties (above the median in Texas), but in lower income counties (below the median in Texas), the slope was steeper, i.e., the increase in prescription rate with white percentage was more dramatic. For 2017 and later, there is no longer a noticeable difference between low-income and high-income counties, although the trend with white population percentage remains. 
 
 What did we find? At the population level, controlled substance prescriptions are associated with how white a population is; before 2017, how low the income of that white population is had an impact and prescription rates were higher overall.
 
