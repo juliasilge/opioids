@@ -260,6 +260,24 @@ opioids_tidy %>%
        subtitle = "Amphetamines are being prescribed more, and barbiturates are being prescribed less")
 ```
 
+How much are opioids specifically changing?
+
+```{r opioid_change, dependson="opioids_tidy"}
+opioids_tidy %>% 
+  filter(Date >= "2016-01-01",
+         Date < "2018-01-01") %>%
+  group_by(Schedule, 
+           Year = paste0("Y", year(Date))) %>%
+  summarise(Pills = sum(Pills)) %>%
+  ungroup %>%
+  spread(Year, Pills) %>%
+  mutate(Change = (Y2017 - Y2016) / Y2016,
+         OverallChange = (sum(Y2017) - sum(Y2016)) / sum(Y2016)) %>%
+  kable()
+```
+
+From 2016 to 2017, the overall change in controlled substances tracked in the PDMP was a 4.7% decrease, but Schedule IV drugs decreased in TX by over 11%.
+
 ## Where is controlled substance use changing?
 
 Let's use linear modeling to find counties where controlled substance use is changing. We would need to find the rate of population growth for these countries to make strong statements about what these mean.

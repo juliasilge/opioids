@@ -1,7 +1,7 @@
 ---
 title: "County Level Texas Controlled Substance Prescription Data"
 author: "Julia Silge"
-date: "2018-07-16"
+date: "2018-09-08"
 output:
   html_document:
     keep_md: yes
@@ -124,18 +124,18 @@ opioids_tidy
 
 ```
 ## # A tibble: 1,234,622 x 6
-##    County   Date       Name                           Category   Schedule Pills
-##    <chr>    <date>     <chr>                          <chr>      <chr>    <dbl>
-##  1 Anderson 2015-04-01 ACETAMINOPHEN WITH CODEINE PH… Opioid     III      37950
-##  2 Anderson 2015-04-01 ACETAMINOPHEN/CAFFEINE/DIHYDR… Opioid     III        380
-##  3 Anderson 2015-04-01 ALPRAZOLAM                     Benzodiaz… IV       52914
-##  4 Anderson 2015-04-01 AMITRIPTYLINE HCL/CHLORDIAZEP… Benzodiaz… IV         180
-##  5 Anderson 2015-04-01 AMPHETAMINE SULFATE            Amphetami… IV          60
-##  6 Anderson 2015-04-01 ARMODAFINIL                    Stimulant  IV         824
-##  7 Anderson 2015-04-01 ASPIRIN/CAFFEINE/DIHYDROCODEI… Opioid     III          0
-##  8 Anderson 2015-04-01 BENZPHETAMINE HCL              Amphetami… III         30
-##  9 Anderson 2015-04-01 BROMPHENIRAMINE MALEATE/PHENY… Opioid     V            0
-## 10 Anderson 2015-04-01 BROMPHENIRAMINE MALEATE/PSEUD… Opioid     III          0
+##    County  Date       Name                            Category   Schedule Pills
+##    <chr>   <date>     <chr>                           <chr>      <chr>    <dbl>
+##  1 Anders… 2015-04-01 ACETAMINOPHEN WITH CODEINE PHO… Opioid     III      37950
+##  2 Anders… 2015-04-01 ACETAMINOPHEN/CAFFEINE/DIHYDRO… Opioid     III        380
+##  3 Anders… 2015-04-01 ALPRAZOLAM                      Benzodiaz… IV       52914
+##  4 Anders… 2015-04-01 AMITRIPTYLINE HCL/CHLORDIAZEPO… Benzodiaz… IV         180
+##  5 Anders… 2015-04-01 AMPHETAMINE SULFATE             Amphetami… IV          60
+##  6 Anders… 2015-04-01 ARMODAFINIL                     Stimulant  IV         824
+##  7 Anders… 2015-04-01 ASPIRIN/CAFFEINE/DIHYDROCODEIN… Opioid     III          0
+##  8 Anders… 2015-04-01 BENZPHETAMINE HCL               Amphetami… III         30
+##  9 Anders… 2015-04-01 BROMPHENIRAMINE MALEATE/PHENYL… Opioid     V            0
+## 10 Anders… 2015-04-01 BROMPHENIRAMINE MALEATE/PSEUDO… Opioid     III          0
 ## # ... with 1,234,612 more rows
 ```
 
@@ -346,6 +346,34 @@ opioids_tidy %>%
 ```
 
 ![Growing and shrinking controlled substances in Texas](figure/fastest_growing-1.png)
+
+How much are opioids specifically changing?
+
+
+```r
+opioids_tidy %>% 
+  filter(Date >= "2016-01-01",
+         Date < "2018-01-01") %>%
+  group_by(Schedule, 
+           Year = paste0("Y", year(Date))) %>%
+  summarise(Pills = sum(Pills)) %>%
+  ungroup %>%
+  spread(Year, Pills) %>%
+  mutate(Change = (Y2017 - Y2016) / Y2016,
+         OverallChange = (sum(Y2017) - sum(Y2016)) / sum(Y2016)) %>%
+  kable()
+```
+
+
+
+|Schedule |      Y2016|     Y2017|     Change| OverallChange|
+|:--------|----------:|---------:|----------:|-------------:|
+|II       |  897988275| 911034854|  0.0145287|    -0.0471626|
+|III      |  412462466| 405184500| -0.0176452|    -0.0471626|
+|IV       | 1075448469| 955499407| -0.1115340|    -0.0471626|
+|V        |   91440621|  88783281| -0.0290608|    -0.0471626|
+
+From 2016 to 2017, the overall change in controlled substances tracked in the PDMP was a 4.7% decrease, but Schedule IV drugs decreased in TX by over 11%.
 
 ## Where is controlled substance use changing?
 
@@ -728,114 +756,114 @@ lm4 <- lm(OpioidRate ~ Income + White + Date + log(TotalPop), data = opioids)
 huxreg(lm1, lm2, lm3, lm4)
 ```
 
-<!--html_preserve--><table class="huxtable" style="border-collapse: collapse; margin-bottom: 2em; margin-top: 2em; width: 50%; margin-left: auto; margin-right: auto;">
-<col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><col style="width: NA;"><tr>
-  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1)</td>
-  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(2)</td>
-  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(3)</td>
-  <td  style="vertical-align: top; text-align: center; white-space: nowrap; border-width:0.8pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(4)</td>
+<!--html_preserve--><table class="huxtable" style="border-collapse: collapse; margin-bottom: 2em; margin-top: 2em; width: 50%; margin-left: auto; margin-right: auto; ">
+<col><col><col><col><col><tr>
+<td style="vertical-align: top; text-align: center; white-space: nowrap; border-style: solid; border-width: 0.8pt 0pt 0pt 0pt; padding: 4pt 4pt 4pt 4pt;"></td>
+<td style="vertical-align: top; text-align: center; white-space: nowrap; border-style: solid; border-width: 0.8pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">(1)</td>
+<td style="vertical-align: top; text-align: center; white-space: nowrap; border-style: solid; border-width: 0.8pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">(2)</td>
+<td style="vertical-align: top; text-align: center; white-space: nowrap; border-style: solid; border-width: 0.8pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">(3)</td>
+<td style="vertical-align: top; text-align: center; white-space: nowrap; border-style: solid; border-width: 0.8pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">(4)</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(Intercept)</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">5.674 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">6.503 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">8.017 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">3.244 ***</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(Intercept)</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">5.674 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">6.503 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">8.017 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">3.244 ***</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.536)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.518)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.837)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.769)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;"></td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.536)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.518)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.837)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.769)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">Income</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.285 **&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-3.302 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-0.439&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-5.046 ***</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">Income</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-3.285 **&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-3.302 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-0.439&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-5.046 ***</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.040)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.984)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.145)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(1.005)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;"></td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(1.040)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.984)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(1.145)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(1.005)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">White</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.053 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.066 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">7.786 ***</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">White</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">7.053 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">7.066 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">7.786 ***</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.554)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.524)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.525)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;"></td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.554)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.524)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.525)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">Date 2017 and later</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.655 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.644 ***</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1.653 ***</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">Date 2017 and later</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-1.655 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-1.644 ***</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-1.653 ***</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.213)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.248)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.207)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;"></td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.213)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.248)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">(0.207)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">log(TotalPop)</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.131&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.372 ***</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">log(TotalPop)</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">0.131&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">0.372 ***</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "></td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.077)&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.4pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">(0.066)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;"></td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">(0.077)&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.4pt 0pt; padding: 4pt 4pt 4pt 4pt;">(0.066)&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">N</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">N</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">507&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">R2</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.243&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.324&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.085&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">0.364&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">R2</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">0.243&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">0.324&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">0.085&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">0.364&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">logLik</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1190.314&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1161.676&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1238.385&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">-1146.313&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">logLik</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-1190.314&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-1161.676&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-1238.385&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; padding: 4pt 4pt 4pt 4pt;">-1146.313&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  style="vertical-align: top; text-align: left; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">AIC</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2388.629&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2333.352&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2486.769&nbsp;&nbsp;&nbsp;&nbsp;</td>
-  <td  style="vertical-align: top; text-align: right; white-space: nowrap; border-width:0pt 0pt 0.8pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; ">2304.626&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: left; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.8pt 0pt; padding: 4pt 4pt 4pt 4pt;">AIC</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.8pt 0pt; padding: 4pt 4pt 4pt 4pt;">2388.629&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.8pt 0pt; padding: 4pt 4pt 4pt 4pt;">2333.352&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.8pt 0pt; padding: 4pt 4pt 4pt 4pt;">2486.769&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<td style="vertical-align: top; text-align: right; white-space: nowrap; border-style: solid; border-width: 0pt 0pt 0.8pt 0pt; padding: 4pt 4pt 4pt 4pt;">2304.626&nbsp;&nbsp;&nbsp;&nbsp;</td>
 </tr>
 <tr>
-  <td  colspan="5" style="vertical-align: top; text-align: left; white-space: normal; border-width:0pt 0pt 0pt 0pt; border-style: solid; padding: 4pt 4pt 4pt 4pt; "> *** p &lt; 0.001;  ** p &lt; 0.01;  * p &lt; 0.05.</td>
+<td colspan="5" style="vertical-align: top; text-align: left; white-space: normal; padding: 4pt 4pt 4pt 4pt;"> *** p &lt; 0.001;  ** p &lt; 0.01;  * p &lt; 0.05.</td>
 </tr>
 </table>
 <!--/html_preserve-->
